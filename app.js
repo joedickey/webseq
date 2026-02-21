@@ -31,7 +31,6 @@ let cy = null;
 let isPlaying = false;
 
 let prevPlayingNodes = [];
-let prevPlayingEdges = [];
 
 // ═══════════════════════════════════════════════════════════
 // A. PIANO ROLL
@@ -130,9 +129,9 @@ function stop() {
   isPlaying = false;
   document.querySelectorAll('.step-cell.playhead').forEach(el => el.classList.remove('playhead'));
   prevPlayingNodes.forEach(n => n.removeClass('playing'));
-  prevPlayingEdges.forEach(e => e.removeClass('playing'));
   prevPlayingNodes = [];
-  prevPlayingEdges = [];
+  const ball = cy && cy.getElementById('__ball__');
+  if (ball && ball.length) { ball.stop(); ball.style('opacity', 0); }
 }
 
 function setBPM(val) {
@@ -197,12 +196,18 @@ function initGraph() {
           'arrow-scale': 0.75,
         },
       },
+      // Traversal ball — animated node that rides sequence edges
       {
-        selector: 'edge[type = "sequence"].playing',
+        selector: 'node.ball',
         style: {
-          'line-color': '#ffcc00',
-          'target-arrow-color': '#ffcc00',
-          'width': 2.5,
+          'width': 14,
+          'height': 14,
+          'background-color': '#ffcc00',
+          'border-width': 2,
+          'border-color': '#ffaa00',
+          'label': '',
+          'opacity': 0,
+          'z-index': 999,
         },
       },
       // Chord-stack pipes — thin, no arrows, straight
@@ -220,6 +225,9 @@ function initGraph() {
     elements: [],
     layout: { name: 'null' },
   });
+
+  // Add the traversal ball (hidden until playback starts)
+  cy.add({ data: { id: '__ball__' }, classes: 'ball', position: { x: 0, y: 0 } });
 }
 
 /** Unique node ID for one occurrence of a note at a specific step. */
@@ -310,13 +318,17 @@ function updateGraph() {
   // This guarantees each occurrence of a pitch is a distinct node — no self-loops.
   const activeIds = new Set([...chordGroups.values()].flatMap(g => g.nodeIds));
 
-  // Clear edges and playhead tracking
+  // Clear edges and node highlight tracking
   cy.edges().remove();
-  prevPlayingEdges = [];
   prevPlayingNodes = [];
 
-  // Remove stale event-nodes; reset class on still-active ones
+  // Stop ball and hide it — positions are about to change
+  const ball = cy.getElementById('__ball__');
+  if (ball.length) { ball.stop(); ball.style('opacity', 0); }
+
+  // Remove stale event-nodes; reset class on still-active ones (never remove the ball)
   cy.nodes().forEach(node => {
+    if (node.id() === '__ball__') return;
     if (activeIds.has(node.id())) {
       node.removeClass('playing');
     } else {
@@ -391,38 +403,52 @@ function updateGraph() {
 
 /**
  * Called on every sequencer tick.
- * Highlights all notes in the active chord and the incoming sequence edge.
+ * Lights up the nodes at the current step, then launches the traversal ball
+ * toward the next step's anchor — arriving just in time for that step to fire.
  */
 function updateGraphPlayhead(step) {
   if (!cy) return;
 
+  // Clear previous node highlights
   prevPlayingNodes.forEach(n => n.removeClass('playing'));
-  prevPlayingEdges.forEach(e => e.removeClass('playing'));
   prevPlayingNodes = [];
-  prevPlayingEdges = [];
 
   if (!chordGroups.has(step)) return;
 
-  // Highlight every event-node in the chord (the whole snowman lights up)
+  // Light up every event-node in the current chord (whole snowman glows)
   chordGroups.get(step).nodeIds.forEach(id => {
     const node = cy.getElementById(id);
-    if (node.length) {
-      node.addClass('playing');
-      prevPlayingNodes.push(node);
-    }
+    if (node.length) { node.addClass('playing'); prevPlayingNodes.push(node); }
   });
 
-  // Highlight the sequence edge that was just traversed to reach this step
-  if (stepSequence.length >= 2) {
-    const idx = stepSequence.findIndex(g => g.step === step);
-    if (idx >= 0) {
-      const prevIdx = (idx - 1 + stepSequence.length) % stepSequence.length;
-      cy.edges(`[seqIdx = ${prevIdx}]`).forEach(e => {
-        e.addClass('playing');
-        prevPlayingEdges.push(e);
-      });
-    }
-  }
+  // Animate the ball from the current anchor to the next anchor
+  const ball = cy.getElementById('__ball__');
+  if (!ball.length || stepSequence.length < 2) return;
+
+  const idx = stepSequence.findIndex(g => g.step === step);
+  if (idx < 0) return;
+
+  const current  = stepSequence[idx];
+  const nextIdx  = (idx + 1) % stepSequence.length;
+  const next     = stepSequence[nextIdx];
+
+  const srcNode = cy.getElementById(current.anchorId);
+  const tgtNode = cy.getElementById(next.anchorId);
+  if (!srcNode.length || !tgtNode.length) return;
+
+  // How many steps until the next chord fires (wraps cyclically)
+  const dist = idx < stepSequence.length - 1
+    ? next.step - current.step
+    : (STEPS - current.step) + next.step;
+
+  // Duration = rhythmic gap converted to milliseconds at current BPM
+  const stepMs   = (60 / Tone.Transport.bpm.value / 4) * 1000; // one 16th note
+  const duration = Math.max(dist, 1) * stepMs;
+
+  ball.stop();
+  ball.position(srcNode.position());
+  ball.style('opacity', 1);
+  ball.animate({ position: tgtNode.position(), duration, easing: 'linear' });
 }
 
 // ═══════════════════════════════════════════════════════════
