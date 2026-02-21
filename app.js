@@ -274,6 +274,17 @@ function snapChordStacks() {
 }
 
 /**
+ * Refit the graph to an optimal view: recompute positions for the current
+ * container size then fit all elements with padding.
+ * Called on resize and by the Fit button.
+ */
+function fitGraph() {
+  if (!cy) return;
+  cy.resize();     // sync Cytoscape's internal dimensions with the DOM
+  positionNodes(); // recompute circle using new width/height, then cy.fit()
+}
+
+/**
  * Place each step's anchor node clockwise around a circle, with position
  * proportional to step index (step 0 = 12 o'clock, increasing clockwise).
  * Then snap chord stacks above their anchors and fit the viewport.
@@ -463,6 +474,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('play-btn').addEventListener('click', play);
   document.getElementById('stop-btn').addEventListener('click', stop);
   document.getElementById('clear-btn').addEventListener('click', clearAll);
+  document.getElementById('fit-btn').addEventListener('click', fitGraph);
+
+  // Refit whenever the graph panel is resized (e.g. window resize, devtools)
+  let resizeTimer = null;
+  new ResizeObserver(() => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(fitGraph, 80);
+  }).observe(document.getElementById('graph-wrap'));
 
   document.getElementById('bpm').addEventListener('input', e => setBPM(e.target.value));
 

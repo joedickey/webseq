@@ -299,11 +299,38 @@ h1 {
 
 /* ─── Graph ───────────────────────────────────── */
 
-#graph {
+#graph-wrap {
   flex: 1;
   min-height: 380px;
-  background: #08080f;
-  border-top: 1px solid #1a1a30;
   position: relative;
+  border-top: 1px solid #1a1a30;
+}
+
+#graph {
+  position: absolute;
+  inset: 0;
+  background: #08080f;
   overflow: hidden;
+}
+
+#fit-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  padding: 5px 11px;
+  background: #12122a;
+  color: #00d4aa;
+  border: 1px solid #00d4aa44;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-family: inherit;
+  opacity: 0.6;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+
+#fit-btn:hover {
+  opacity: 1;
+  border-color: #00d4aa;
 }
