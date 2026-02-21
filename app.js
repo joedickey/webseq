@@ -8,7 +8,8 @@
 const NOTES = ['C5','B4','A#4','A4','G#4','G4','F#4','F4','E4','D#4','D4','C#4','C4'];
 const NOTE_LABELS = ['C5','B','A#','A','G#','G','F#','F','E','D#','D','C#','C4'];
 const STEPS = 16;
-const PX_PER_STEP = 22; // pixels per rhythmic step for COSE ideal edge length
+const PX_PER_STEP = 22;
+const NODE_STACK_SPACING = 52; // px between node centres in a chord stack
 
 // ═══════════════════════════════════════════════════════════
 // STATE
@@ -18,13 +19,17 @@ const PX_PER_STEP = 22; // pixels per rhythmic step for COSE ideal edge length
 const grid = {};
 NOTES.forEach(note => { grid[note] = new Array(STEPS).fill(false); });
 
-let currentSequence = []; // ordered (note, step) event list; rebuilt on every toggle
+// chordGroups: Map<step, { notes: string[] (high→low), anchor: string (lowest pitch) }>
+let chordGroups = new Map();
+
+// stepSequence: [{ step, notes, anchor }, ...] in step order — drives sequence edges
+let stepSequence = [];
+
 let synth = null;
 let loop = null;
 let cy = null;
 let isPlaying = false;
 
-// Tracks which Cytoscape elements have the 'playing' class so we can clear them
 let prevPlayingNodes = [];
 let prevPlayingEdges = [];
 
@@ -35,7 +40,7 @@ let prevPlayingEdges = [];
 function buildPianoRoll() {
   const container = document.getElementById('piano-roll');
 
-  // Header row: blank label + step numbers 1–16
+  // Header: blank label + step numbers
   const blankLabel = document.createElement('div');
   blankLabel.className = 'pr-label';
   container.appendChild(blankLabel);
@@ -89,12 +94,10 @@ function initSynth() {
 
   loop = new Tone.Sequence(
     (time, step) => {
-      // Trigger audio
       const activeNotes = NOTES.filter(n => grid[n][step]);
       if (activeNotes.length > 0) {
         synth.triggerAttackRelease(activeNotes, '16n', time);
       }
-      // Schedule visual update in sync with the audio clock
       scheduleVisual(() => {
         highlightPlayhead(step);
         updateGraphPlayhead(step);
@@ -103,20 +106,12 @@ function initSynth() {
     [...Array(STEPS).keys()],
     '16n',
   );
-  // Schedule loop to always start at transport position 0
   loop.start(0);
 }
 
-/**
- * Run a visual callback in sync with Tone.js audio time.
- * Uses Tone.getDraw() when available, falls back to rAF.
- */
 function scheduleVisual(cb, time) {
   if (typeof Tone.getDraw === 'function') {
-    try {
-      Tone.getDraw().schedule(cb, time);
-      return;
-    } catch (_) { /* fall through */ }
+    try { Tone.getDraw().schedule(cb, time); return; } catch (_) { /* fall through */ }
   }
   requestAnimationFrame(cb);
 }
@@ -133,11 +128,7 @@ function stop() {
   if (!isPlaying) return;
   Tone.Transport.stop();
   isPlaying = false;
-
-  // Clear piano roll playhead
   document.querySelectorAll('.step-cell.playhead').forEach(el => el.classList.remove('playhead'));
-
-  // Clear graph playing state
   prevPlayingNodes.forEach(n => n.removeClass('playing'));
   prevPlayingEdges.forEach(e => e.removeClass('playing'));
   prevPlayingNodes = [];
@@ -149,20 +140,12 @@ function setBPM(val) {
   if (!isNaN(bpm) && bpm > 0) Tone.Transport.bpm.value = bpm;
 }
 
-function setWaveform(type) {
-  synth.set({ oscillator: { type } });
-}
+function setWaveform(type) { synth.set({ oscillator: { type } }); }
 
-function setEnvelope(param, value) {
-  synth.set({ envelope: { [param]: value } });
-}
+function setEnvelope(param, value) { synth.set({ envelope: { [param]: value } }); }
 
 function clearAll() {
-  NOTES.forEach(note => {
-    for (let s = 0; s < STEPS; s++) {
-      grid[note][s] = false;
-    }
-  });
+  NOTES.forEach(note => { for (let s = 0; s < STEPS; s++) grid[note][s] = false; });
   document.querySelectorAll('.step-cell.active').forEach(el => el.classList.remove('active'));
   updateGraph();
 }
@@ -202,8 +185,9 @@ function initGraph() {
           'color': '#ffcc00',
         },
       },
+      // Rhythmic sequence arrows
       {
-        selector: 'edge',
+        selector: 'edge[type = "sequence"]',
         style: {
           'width': 1.5,
           'line-color': '#00d4aa40',
@@ -214,11 +198,22 @@ function initGraph() {
         },
       },
       {
-        selector: 'edge.playing',
+        selector: 'edge[type = "sequence"].playing',
         style: {
           'line-color': '#ffcc00',
           'target-arrow-color': '#ffcc00',
           'width': 2.5,
+        },
+      },
+      // Chord-stack pipes — thin, no arrows, straight
+      {
+        selector: 'edge[type = "chord-stack"]',
+        style: {
+          'width': 2,
+          'line-color': '#1a4040',
+          'target-arrow-shape': 'none',
+          'source-arrow-shape': 'none',
+          'curve-style': 'straight',
         },
       },
     ],
@@ -227,148 +222,207 @@ function initGraph() {
   });
 }
 
+/** Unique node ID for one occurrence of a note at a specific step. */
+const eventId = (note, step) => `${note}@${step}`;
+
 /**
- * Build an ordered flat list of (note, step) events by walking steps 0–15
- * left-to-right and notes top-to-bottom within each step.
+ * Group active notes by step.
+ * Notes within a step are ordered high→low (NOTES array order).
+ * Each note occurrence gets its own event-node ID so the same pitch at two
+ * different steps produces two distinct nodes — no self-loops possible.
+ * The anchor = lowest pitch = bottom of the snowman stack.
  */
-function buildSequence() {
-  const seq = [];
+function buildChordGroups() {
+  const groups = new Map();
   for (let s = 0; s < STEPS; s++) {
-    NOTES.forEach(note => {
-      if (grid[note][s]) seq.push({ note, step: s });
-    });
+    const notesAtStep = NOTES.filter(n => grid[n][s]); // already high→low
+    if (notesAtStep.length > 0) {
+      const nodeIds  = notesAtStep.map(n => eventId(n, s));
+      const anchorId = nodeIds[nodeIds.length - 1]; // lowest pitch node
+      groups.set(s, {
+        notes: notesAtStep,
+        nodeIds,
+        anchor:   notesAtStep[notesAtStep.length - 1],
+        anchorId,
+      });
+    }
   }
-  return seq;
+  return groups;
 }
 
 /**
- * Rebuild node/edge state and re-run the COSE layout whenever the grid changes.
+ * Snap every chord stack into a strict vertical column above its anchor.
+ * Called after the COSE layout settles so the anchor's final position is known.
+ */
+function snapChordStacks() {
+  chordGroups.forEach(({ nodeIds, anchorId }) => {
+    if (nodeIds.length <= 1) return;
+    const { x: ax, y: ay } = cy.getElementById(anchorId).position();
+    nodeIds.forEach((id, i) => {
+      const stepsAbove = nodeIds.length - 1 - i; // 0 for anchor, counting up
+      cy.getElementById(id).position({ x: ax, y: ay - stepsAbove * NODE_STACK_SPACING });
+    });
+  });
+}
+
+/**
+ * Place each step's anchor node clockwise around a circle, with position
+ * proportional to step index (step 0 = 12 o'clock, increasing clockwise).
+ * Then snap chord stacks above their anchors and fit the viewport.
+ */
+function positionNodes() {
+  const containerW = cy.container().clientWidth  || 400;
+  const containerH = cy.container().clientHeight || 380;
+  const r  = Math.min(containerW, containerH) * 0.28;
+  const cx = containerW  / 2;
+  const cy_center = containerH / 2;
+
+  stepSequence.forEach(({ step, anchorId }) => {
+    // -π/2 puts step 0 at 12 o'clock; adding a positive fraction goes clockwise
+    const angle = -Math.PI / 2 + (step / STEPS) * 2 * Math.PI;
+    cy.getElementById(anchorId).position({
+      x: cx       + r * Math.cos(angle),
+      y: cy_center + r * Math.sin(angle),
+    });
+  });
+
+  snapChordStacks();
+  cy.fit(40);
+}
+
+/**
+ * Rebuild node/edge state whenever the grid changes.
+ *
+ * Solo notes  → standalone node, sequence arrows in/out.
+ * Chord notes → vertical snowman stack; only the bottom (anchor) node carries
+ *               sequence arrows; stack members are joined by thin pipe edges.
  */
 function updateGraph() {
   if (!cy) return;
 
-  currentSequence = buildSequence();
-  const activeSet = new Set(currentSequence.map(e => e.note));
+  chordGroups = buildChordGroups();
+  stepSequence = [];
+  for (let s = 0; s < STEPS; s++) {
+    if (chordGroups.has(s)) stepSequence.push({ step: s, ...chordGroups.get(s) });
+  }
 
-  // Remove all edges and clear playhead tracking
+  // Active set is now keyed by event-node IDs (note@step), not bare note names.
+  // This guarantees each occurrence of a pitch is a distinct node — no self-loops.
+  const activeIds = new Set([...chordGroups.values()].flatMap(g => g.nodeIds));
+
+  // Clear edges and playhead tracking
   cy.edges().remove();
   prevPlayingEdges = [];
   prevPlayingNodes = [];
 
-  // Remove nodes that are no longer active
+  // Remove stale event-nodes; reset class on still-active ones
   cy.nodes().forEach(node => {
-    if (activeSet.has(node.id())) {
+    if (activeIds.has(node.id())) {
       node.removeClass('playing');
     } else {
       node.remove();
     }
   });
 
-  // Add nodes that became active (place them on a virtual circle so COSE
-  // has sensible starting positions rather than stacking at the origin)
+  // Add newly active event-nodes — seed positions on a circle spread by step
   const containerW = cy.container().clientWidth  || 400;
   const containerH = cy.container().clientHeight || 380;
   const r = Math.min(containerW, containerH) * 0.35;
-  activeSet.forEach(note => {
-    if (cy.getElementById(note).length === 0) {
-      const ni = NOTES.indexOf(note);
-      const angle = (ni / NOTES.length) * 2 * Math.PI - Math.PI / 2;
-      cy.add({
-        data: { id: note, label: NOTE_LABELS[ni] },
-        position: {
-          x: containerW / 2 + r * Math.cos(angle),
-          y: containerH / 2 + r * Math.sin(angle),
+  chordGroups.forEach(({ notes, nodeIds }, step) => {
+    notes.forEach((note, i) => {
+      const id = nodeIds[i];
+      if (cy.getElementById(id).length === 0) {
+        const ni = NOTES.indexOf(note);
+        const angle = (step / STEPS) * 2 * Math.PI - Math.PI / 2;
+        cy.add({
+          data: { id, label: NOTE_LABELS[ni] },
+          position: {
+            x: containerW / 2 + r * Math.cos(angle),
+            y: containerH / 2 + r * Math.sin(angle),
+          },
+        });
+      }
+    });
+  });
+
+  if (activeIds.size === 0) return;
+
+  // ── Chord-stack pipe edges (within each step, high → low, no arrows) ──
+  const stackEdges = [];
+  chordGroups.forEach(({ nodeIds }, step) => {
+    for (let i = 0; i < nodeIds.length - 1; i++) {
+      stackEdges.push({
+        data: {
+          id: `stack-${step}-${i}`,
+          source: nodeIds[i],       // higher note (top)
+          target: nodeIds[i + 1],  // lower note (towards anchor)
+          type: 'chord-stack',
         },
       });
     }
   });
 
-  if (activeSet.size === 0) return;
-  if (currentSequence.length < 2) { cy.fit(40); return; }
+  // ── Sequence edges (anchorId → next anchorId, step distance in length) ──
+  const seqEdges = [];
+  if (stepSequence.length >= 2) {
+    const n = stepSequence.length;
+    stepSequence.forEach(({ step, anchorId }, i) => {
+      const next = stepSequence[(i + 1) % n];
+      let dist = i < n - 1 ? next.step - step : (STEPS - step) + next.step;
+      dist = Math.max(dist, 1);
+      seqEdges.push({
+        data: {
+          id: `seq-${i}`,
+          source: anchorId,
+          target: next.anchorId,
+          dist,
+          seqIdx: i,
+          type: 'sequence',
+        },
+      });
+    });
+  }
 
-  const n = currentSequence.length;
+  cy.add([...stackEdges, ...seqEdges]);
 
-  // Build directed edges: consecutive events + cyclic wrap
-  const edgeDefs = currentSequence.map((curr, i) => {
-    const next = currentSequence[(i + 1) % n];
-
-    let dist;
-    if (i < n - 1) {
-      // Forward distance within the bar
-      dist = next.step - curr.step;
-    } else {
-      // Cyclic wrap: distance from last event back to first
-      dist = (STEPS - curr.step) + next.step;
-    }
-    dist = Math.max(dist, 1); // minimum 1 to avoid zero-length edges
-
-    return {
-      data: {
-        id: `e${i}`,
-        source: curr.note,
-        target: next.note,
-        dist,
-        seqIdx: i,
-      },
-    };
-  });
-
-  cy.add(edgeDefs);
-
-  // COSE force-directed layout: ideal edge length encodes step distance
-  cy.layout({
-    name: 'cose',
-    idealEdgeLength: edge => edge.data('dist') * PX_PER_STEP,
-    animate: false,
-    fit: true,
-    padding: 40,
-    randomize: false,
-    nodeRepulsion: () => 250000,
-    nodeOverlap: 20,
-    edgeElasticity: () => 100,
-    gravity: 60,
-    numIter: 1000,
-    initialTemp: 150,
-    coolingFactor: 0.95,
-    minTemp: 1.0,
-  }).run();
+  // Place anchors clockwise on a circle, snap chord stacks, fit viewport
+  positionNodes();
 }
 
 /**
- * Called on every sequencer tick (via scheduleVisual).
- * Highlights the node(s) and incoming edge(s) for the current step.
+ * Called on every sequencer tick.
+ * Highlights all notes in the active chord and the incoming sequence edge.
  */
 function updateGraphPlayhead(step) {
   if (!cy) return;
 
-  // Clear previous playing highlights
   prevPlayingNodes.forEach(n => n.removeClass('playing'));
   prevPlayingEdges.forEach(e => e.removeClass('playing'));
   prevPlayingNodes = [];
   prevPlayingEdges = [];
 
-  const n = currentSequence.length;
-  if (n === 0) return;
+  if (!chordGroups.has(step)) return;
 
-  currentSequence.forEach((event, idx) => {
-    if (event.step !== step) return;
-
-    // Highlight the node for this note
-    const node = cy.getElementById(event.note);
+  // Highlight every event-node in the chord (the whole snowman lights up)
+  chordGroups.get(step).nodeIds.forEach(id => {
+    const node = cy.getElementById(id);
     if (node.length) {
       node.addClass('playing');
       prevPlayingNodes.push(node);
     }
+  });
 
-    // Highlight the edge that leads INTO this event (just traversed)
-    if (n >= 2) {
-      const incomingSeqIdx = (idx - 1 + n) % n;
-      cy.edges(`[seqIdx = ${incomingSeqIdx}]`).forEach(e => {
+  // Highlight the sequence edge that was just traversed to reach this step
+  if (stepSequence.length >= 2) {
+    const idx = stepSequence.findIndex(g => g.step === step);
+    if (idx >= 0) {
+      const prevIdx = (idx - 1 + stepSequence.length) % stepSequence.length;
+      cy.edges(`[seqIdx = ${prevIdx}]`).forEach(e => {
         e.addClass('playing');
         prevPlayingEdges.push(e);
       });
     }
-  });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
