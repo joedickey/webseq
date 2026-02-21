@@ -168,24 +168,15 @@ function initGraph() {
         style: {
           'width': 38,
           'height': 38,
-          'background-color': '#1a1a30',
-          'border-width': 1,
-          'border-color': '#2e2e50',
+          'background-color': '#00251e',
+          'border-width': 2,
+          'border-color': '#00d4aa',
           'label': 'data(label)',
           'font-size': '11px',
           'font-family': 'monospace',
-          'color': '#445',
+          'color': '#00d4aa',
           'text-valign': 'center',
           'text-halign': 'center',
-        },
-      },
-      {
-        selector: 'node.active-note',
-        style: {
-          'background-color': '#00251e',
-          'border-color': '#00d4aa',
-          'border-width': 2,
-          'color': '#00d4aa',
         },
       },
       {
@@ -217,18 +208,8 @@ function initGraph() {
         },
       },
     ],
-    elements: {
-      nodes: NOTES.map((note, i) => ({
-        data: { id: note, label: NOTE_LABELS[i] },
-      })),
-    },
-    layout: { name: 'circle', padding: 40 },
-  });
-
-  // Re-fit after the browser has computed the final flex dimensions
-  requestAnimationFrame(() => {
-    cy.layout({ name: 'circle', padding: 40 }).run();
-    cy.fit(40);
+    elements: [],
+    layout: { name: 'null' },
   });
 }
 
@@ -255,18 +236,41 @@ function updateGraph() {
   currentSequence = buildSequence();
   const activeSet = new Set(currentSequence.map(e => e.note));
 
-  // Sync node highlight classes
-  cy.nodes().forEach(node => {
-    node.toggleClass('active-note', activeSet.has(node.id()));
-    node.removeClass('playing');
-  });
-
-  // Remove all previous edges
+  // Remove all edges and clear playhead tracking
   cy.edges().remove();
   prevPlayingEdges = [];
   prevPlayingNodes = [];
 
-  if (currentSequence.length < 2) return;
+  // Remove nodes that are no longer active
+  cy.nodes().forEach(node => {
+    if (activeSet.has(node.id())) {
+      node.removeClass('playing');
+    } else {
+      node.remove();
+    }
+  });
+
+  // Add nodes that became active (place them on a virtual circle so COSE
+  // has sensible starting positions rather than stacking at the origin)
+  const containerW = cy.container().clientWidth  || 400;
+  const containerH = cy.container().clientHeight || 380;
+  const r = Math.min(containerW, containerH) * 0.35;
+  activeSet.forEach(note => {
+    if (cy.getElementById(note).length === 0) {
+      const ni = NOTES.indexOf(note);
+      const angle = (ni / NOTES.length) * 2 * Math.PI - Math.PI / 2;
+      cy.add({
+        data: { id: note, label: NOTE_LABELS[ni] },
+        position: {
+          x: containerW / 2 + r * Math.cos(angle),
+          y: containerH / 2 + r * Math.sin(angle),
+        },
+      });
+    }
+  });
+
+  if (activeSet.size === 0) return;
+  if (currentSequence.length < 2) { cy.fit(40); return; }
 
   const n = currentSequence.length;
 
