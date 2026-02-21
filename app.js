@@ -271,33 +271,110 @@ function clearAll() {
 
 // ─── Random Sequence ───────────────────────────────────────
 
-function shuffleArray(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+/**
+ * Weighted random sample of k items from pool without replacement.
+ * Items with weight 0 are never selected.
+ */
+function weightedSample(pool, k, weights) {
+  const w = [...weights];
+  const result = [];
+  for (let i = 0; i < k; i++) {
+    const total = w.reduce((a, b) => a + b, 0);
+    if (total === 0) break;
+    let rand = Math.random() * total;
+    for (let j = 0; j < pool.length; j++) {
+      rand -= w[j];
+      if (rand <= 0) { result.push(pool[j]); w[j] = 0; break; }
+    }
   }
-  return a;
+  return result;
 }
 
 /**
- * Fill the grid with a randomised sequence:
- *   - 6–12 steps active (never all 16, always at least 6)
- *   - 1–4 notes per step, weighted toward sparser chords
- *   - Notes chosen without replacement within each step
+ * Fill the grid with a musically shaped random sequence:
+ *
+ *   Steps  — 6–11 active, selected with rhythmic weighting so downbeats
+ *             (steps 0, 4, 8, 12) are ~2.5× more likely than weak 16ths.
+ *
+ *   Contour — one of five melodic arcs (arch, valley, ascend, descend, wave)
+ *             chosen at random. The melody line is pulled toward the arc with
+ *             a gravity coefficient plus organic noise, so the result follows
+ *             the shape without being robotic.
+ *
+ *   Chords  — ~30 % fewer than before (77 % single-note, 15 % dyad,
+ *             6 % triad, 2 % quad). When chords do appear, intervals are
+ *             chosen from musically consonant values (minor/major 3rd,
+ *             perfect 4th/5th) rather than fully random rows.
  */
 function randomSeq() {
   for (let r = 0; r < NUM_ROWS; r++) grid[r].fill(false);
   document.querySelectorAll('.step-cell.active').forEach(el => el.classList.remove('active'));
 
-  const numSteps   = 6 + Math.floor(Math.random() * 7);   // 6–12
-  const activeSteps = shuffleArray([...Array(STEPS).keys()]).slice(0, numSteps);
+  // ── Step selection with rhythmic bias ──────────────────────
+  const numSteps   = 6 + Math.floor(Math.random() * 6);           // 6–11
+  const stepPool   = [...Array(STEPS).keys()];
+  const stepWts    = stepPool.map(s => s % 4 === 0 ? 2.5 : s % 2 === 0 ? 1.2 : 0.7);
+  const activeSteps = weightedSample(stepPool, numSteps, stepWts).sort((a, b) => a - b);
 
-  activeSteps.forEach(step => {
-    // Note-count distribution: 1→45 %, 2→30 %, 3→18 %, 4→7 %
-    const r = Math.random();
-    const noteCount = r < 0.45 ? 1 : r < 0.75 ? 2 : r < 0.93 ? 3 : 4;
-    const rows = shuffleArray([...Array(NUM_ROWS).keys()]).slice(0, noteCount);
+  // ── Melodic contour ────────────────────────────────────────
+  // Row 0 = highest pitch, row NUM_ROWS-1 = lowest pitch
+  const CONTOURS = ['arch', 'valley', 'ascend', 'descend', 'wave'];
+  const contour  = CONTOURS[Math.floor(Math.random() * CONTOURS.length)];
+  const mid      = (NUM_ROWS - 1) / 2;
+
+  function contourRow(t) {             // t ∈ [0, 1]
+    switch (contour) {
+      case 'arch':    return mid - (mid - 1) * Math.sin(Math.PI * t);           // rises then falls in pitch
+      case 'valley':  return mid + (mid - 1) * Math.sin(Math.PI * t);           // falls then rises
+      case 'ascend':  return (NUM_ROWS - 2) - (NUM_ROWS - 3) * t;               // low → high pitch
+      case 'descend': return 1 + (NUM_ROWS - 3) * t;                            // high → low pitch
+      case 'wave':    return mid + (mid * 0.55) * Math.sin(2.5 * Math.PI * t);  // two+ cycles
+      default:        return mid;
+    }
+  }
+
+  // ── Walk melody with contour gravity + noise ───────────────
+  let curRow = Math.round(contourRow(0));
+
+  activeSteps.forEach((step, idx) => {
+    const t      = idx / Math.max(activeSteps.length - 1, 1);
+    const target = contourRow(t);
+    const gravity = (target - curRow) * 0.4;               // pull toward arc
+    const noise   = (Math.random() - 0.5) * 3.5;           // organic variation
+    curRow = Math.max(0, Math.min(NUM_ROWS - 1, Math.round(curRow + gravity + noise)));
+
+    // ── Note count (30 % fewer chords) ──────────────────────
+    const rv = Math.random();
+    const noteCount = rv < 0.77 ? 1 : rv < 0.92 ? 2 : rv < 0.98 ? 3 : 4;
+
+    const rows = new Set([curRow]);
+
+    if (noteCount >= 2) {
+      // Prefer consonant dyad intervals: m3 (3), M3 (4), P4 (5), P5 (7)
+      const iv  = [3, 4, 4, 5, 7][Math.floor(Math.random() * 5)];
+      const up  = curRow - iv;   // higher pitch = lower row index
+      const dn  = curRow + iv;
+      const cnd = (up >= 0) ? up : (dn < NUM_ROWS ? dn : -1);
+      if (cnd >= 0 && !rows.has(cnd)) rows.add(cnd);
+    }
+
+    if (noteCount >= 3) {
+      // Build upward from the highest pitch already in the chord
+      const topRow = Math.min(...rows);
+      for (const iv of [7, 5, 4, 3]) {
+        const cnd = topRow - iv;
+        if (cnd >= 0 && !rows.has(cnd)) { rows.add(cnd); break; }
+      }
+    }
+
+    if (noteCount >= 4) {
+      // Octave or 5th doubling below the melody note
+      for (const iv of [12, 7]) {
+        const cnd = curRow + iv;
+        if (cnd < NUM_ROWS && !rows.has(cnd)) { rows.add(cnd); break; }
+      }
+    }
+
     rows.forEach(row => {
       grid[row][step] = true;
       const cell = document.querySelector(`.step-cell[data-row="${row}"][data-step="${step}"]`);
