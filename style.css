@@ -212,4 +212,6 @@ h1 {
   min-height: 380px;
   background: #08080f;
   border-top: 1px solid #1a1a30;
+  position: relative;
+  overflow: hidden;
 }

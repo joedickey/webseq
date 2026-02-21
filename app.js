@@ -224,6 +224,12 @@ function initGraph() {
     },
     layout: { name: 'circle', padding: 40 },
   });
+
+  // Re-fit after the browser has computed the final flex dimensions
+  requestAnimationFrame(() => {
+    cy.layout({ name: 'circle', padding: 40 }).run();
+    cy.fit(40);
+  });
 }
 
 /**
