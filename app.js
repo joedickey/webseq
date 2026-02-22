@@ -403,7 +403,12 @@ function setWaveform(type) { synth.set({ oscillator: { type } }); }
 function setEnvelope(param, value) { synth.set({ envelope: { [param]: value } }); }
 
 function setMasterVolume(db) {
-  if (masterVol) masterVol.volume.rampTo(db, 0.05);
+  if (!masterVol) return;
+  if (db <= -40) {
+    masterVol.volume.value = -Infinity; // true silence at leftmost position
+  } else {
+    masterVol.volume.rampTo(db, 0.05);
+  }
 }
 
 function refreshAutoSeqPanel(paramId) {
@@ -432,6 +437,8 @@ function clearAll() {
     refreshAutoSeqPanel(paramId);
     for (let s = 0; s < 16; s++) updateAutoGraphNode(paramId, s);
   });
+  // Clear drum grid
+  clearDrumGrid();
 }
 
 function clearCurrentSeq() {
@@ -608,7 +615,7 @@ function setRootNote(semitone) {
 
 function initDrumSamples() {
   DRUM_INSTRUMENTS.forEach((inst, row) => {
-    drumPlayers[row] = new Tone.Player({ url: inst.url, autostart: false, fadeIn: 0, fadeOut: 0 }).toDestination();
+    drumPlayers[row] = new Tone.Player({ url: inst.url, autostart: false, fadeIn: 0, fadeOut: 0 }).connect(masterVol);
   });
 }
 

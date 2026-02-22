@@ -781,7 +781,8 @@ h1 {
   gap: 3px;
   padding: 8px 16px;
   background: #0d0d1a;
-  height: 120px;
+  /* matches piano roll: header(22) + 13 rows(390) + 13 gaps(26) + padding(20) = 458px */
+  height: calc(22px + 13 * 30px + 13 * 2px + 12px + 8px);
   box-sizing: border-box;
 }
 .auto-seq-param-panel {

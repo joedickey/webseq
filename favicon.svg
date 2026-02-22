@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="5" fill="#08080f"/>
+  <!-- Notes row (teal) -->
+  <rect x="3" y="7" width="5" height="7" rx="1" fill="#00d4aa"/>
+  <rect x="10" y="7" width="5" height="7" rx="1" fill="#1c1c38"/>
+  <rect x="17" y="7" width="5" height="7" rx="1" fill="#00d4aa"/>
+  <rect x="24" y="7" width="5" height="7" rx="1" fill="#1c1c38"/>
+  <!-- Drums row (coral) -->
+  <rect x="3" y="18" width="5" height="7" rx="1" fill="#ff6b6b"/>
+  <rect x="10" y="18" width="5" height="7" rx="1" fill="#ff6b6b"/>
+  <rect x="17" y="18" width="5" height="7" rx="1" fill="#1c1c38"/>
+  <rect x="24" y="18" width="5" height="7" rx="1" fill="#ff6b6b"/>
+</svg>
