@@ -9,6 +9,18 @@ const NUM_ROWS  = 13;   // one octave inclusive (e.g. C4 → C5)
 const STEPS     = 16;
 const NODE_STACK_SPACING = 52; // px between node centres in a chord stack
 
+// ─── Drum Sequencer Constants ───────────────────────────────
+const DRUM_BASE = 'https://raw.githubusercontent.com/joedickey/tr-bot/master/src/audio/';
+const DRUM_INSTRUMENTS = [
+  { label: 'Perc',  abbr: 'Pe', url: DRUM_BASE + 'trbotperc.mp3'  },
+  { label: 'HH2',   abbr: 'H2', url: DRUM_BASE + 'trbothh2.mp3'   },
+  { label: 'HH1',   abbr: 'H1', url: DRUM_BASE + 'trbothh1.mp3'   },
+  { label: 'Snare', abbr: 'Sn', url: DRUM_BASE + 'trbotsnare.mp3' },
+  { label: 'Clap',  abbr: 'Cl', url: DRUM_BASE + 'trbotclap.mp3'  },
+  { label: 'Kick',  abbr: 'Kk', url: DRUM_BASE + 'trbotkick.mp3'  },
+];
+const NUM_DRUM_ROWS = 6;
+
 // ═══════════════════════════════════════════════════════════
 // PITCH STATE — drives NOTES / NOTE_LABELS dynamically
 // ═══════════════════════════════════════════════════════════
@@ -105,6 +117,20 @@ const AUTO_PARAMS = [
 // grid[row][step] = true/false  (row 0 = highest note, row 12 = lowest)
 const grid = {};
 for (let r = 0; r < NUM_ROWS; r++) { grid[r] = new Array(STEPS).fill(false); }
+
+// Drum state
+const drumGrid    = {};
+const drumMuted   = {};
+const drumPlayers = {};
+for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+  drumGrid[r]  = new Array(STEPS).fill(false);
+  drumMuted[r] = false;
+}
+let drumPlaybackMode    = 'forward';
+let drumSeqPosition     = 0;
+let drumChordGroups     = new Map();
+let drumStepSequence    = [];
+let prevDrumPlayingNodes = [];
 
 // chordGroups: Map<step, { notes, nodeIds, anchor, anchorId }>
 let chordGroups = new Map();
@@ -251,12 +277,33 @@ function buildLoop() {
       if (cfg) cfg.apply(seq[step]);
     });
 
+    // Drum step computation and triggering
+    let drumStep, nextDrumStep;
+    if (drumPlaybackMode === 'link') {
+      drumStep     = step;
+      nextDrumStep = nextGridStep;
+      drumSeqPosition = nextPos;
+    } else {
+      drumStep = drumSeqPosition;
+      const nextDrumPos = (drumSeqPosition + 1) % STEPS;
+      nextDrumStep = nextDrumPos;
+      drumSeqPosition = nextDrumPos;
+    }
+    for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+      if (!drumMuted[r] && drumGrid[r][drumStep]) {
+        const p = drumPlayers[r];
+        if (p && p.loaded) { p.stop(time); p.start(time); }
+      }
+    }
+
     scheduleVisual(() => {
       highlightPlayhead(step);
       updateGraphPlayhead(step, nextGridStep);
       highlightAutoBarPlayhead(step);
       // Update all active auto params — each has its own ring in cy
       autoActive.forEach(paramId => updateAutoGraphPlayhead(paramId, step, nextGridStep));
+      highlightDrumPlayhead(drumStep);
+      updateDrumGraphPlayhead(drumStep, nextDrumStep);
     }, time);
   }, '16n');
 }
@@ -327,6 +374,13 @@ function stop() {
   prevPlayingNodes = [];
   const ball = cy && cy.getElementById('__ball__');
   if (ball && ball.length) { ball.stop(); ball.style('opacity', 0); }
+
+  drumSeqPosition = 0;
+  document.querySelectorAll('.drum-cell.playhead').forEach(el => el.classList.remove('playhead'));
+  prevDrumPlayingNodes.forEach(n => n.removeClass('drum-playing'));
+  prevDrumPlayingNodes = [];
+  const drumBall = cy && cy.getElementById('__drum-ball__');
+  if (drumBall && drumBall.length) { drumBall.stop(); drumBall.style('opacity', 0); }
 
   document.querySelectorAll('.auto-bar-track.playhead').forEach(el => el.classList.remove('playhead'));
   autoActive.forEach(paramId => {
@@ -549,6 +603,333 @@ function setRootNote(semitone) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// B2. DRUM SEQUENCER
+// ═══════════════════════════════════════════════════════════
+
+function initDrumSamples() {
+  DRUM_INSTRUMENTS.forEach((inst, row) => {
+    drumPlayers[row] = new Tone.Player({ url: inst.url, autostart: false, fadeIn: 0, fadeOut: 0 }).toDestination();
+  });
+}
+
+function buildDrumRoll() {
+  const body = document.getElementById('drum-body');
+
+  const wrap = document.createElement('div');
+  wrap.id = 'drum-roll-wrap';
+  body.appendChild(wrap);
+
+  const container = document.createElement('div');
+  container.id = 'drum-roll';
+  wrap.appendChild(container);
+
+  const muteCol = document.createElement('div');
+  muteCol.id = 'drum-mute-col';
+  wrap.appendChild(muteCol);
+
+  // Header row: blank label + 16 step numbers
+  const blankLabel = document.createElement('div');
+  blankLabel.className = 'dr-label';
+  container.appendChild(blankLabel);
+
+  for (let s = 0; s < STEPS; s++) {
+    const num = document.createElement('div');
+    num.className = 'dr-step-num';
+    num.textContent = s + 1;
+    container.appendChild(num);
+  }
+
+  // Mute column header spacer (aligns with step-number header row)
+  muteCol.appendChild(document.createElement('div'));
+
+  // Instrument rows
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+    const lbl = document.createElement('div');
+    lbl.className = 'dr-label';
+    lbl.textContent = DRUM_INSTRUMENTS[r].label;
+    container.appendChild(lbl);
+
+    for (let s = 0; s < STEPS; s++) {
+      const cell = document.createElement('div');
+      cell.className = 'drum-cell';
+      cell.dataset.row  = r;
+      cell.dataset.step = s;
+      cell.addEventListener('click', () => onDrumCellClick(r, s, cell));
+      container.appendChild(cell);
+    }
+
+    const muteBtn = document.createElement('button');
+    muteBtn.className = 'drum-mute-btn';
+    muteBtn.dataset.row = r;
+    muteBtn.textContent = 'M';
+    muteBtn.addEventListener('click', () => toggleDrumMute(r, muteBtn));
+    muteCol.appendChild(muteBtn);
+  }
+}
+
+function onDrumCellClick(row, step, cell) {
+  drumGrid[row][step] = !drumGrid[row][step];
+  cell.classList.toggle('active', drumGrid[row][step]);
+  updateDrumGraph();
+}
+
+function toggleDrumMute(row, btn) {
+  drumMuted[row] = !drumMuted[row];
+  btn.classList.toggle('muted', drumMuted[row]);
+  document.querySelectorAll(`.drum-cell[data-row="${row}"]`).forEach(cell => {
+    cell.classList.toggle('muted', drumMuted[row]);
+  });
+}
+
+function clearDrumGrid() {
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) drumGrid[r].fill(false);
+  document.querySelectorAll('.drum-cell.active').forEach(el => el.classList.remove('active'));
+  updateDrumGraph();
+}
+
+function randomDrumSeq() {
+  // Clear without triggering updateDrumGraph yet
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) drumGrid[r].fill(false);
+  document.querySelectorAll('.drum-cell.active').forEach(el => el.classList.remove('active'));
+
+  function setDrum(r, s) {
+    drumGrid[r][s] = true;
+    const cell = document.querySelector(`.drum-cell[data-row="${r}"][data-step="${s}"]`);
+    if (cell) cell.classList.add('active');
+  }
+
+  // Kick (row 5): Steps 0 & 8 always; ~40% 4,12; ~20% other even; ~8% odd
+  setDrum(5, 0); setDrum(5, 8);
+  [4, 12].forEach(s => { if (Math.random() < 0.40) setDrum(5, s); });
+  for (let s = 0; s < STEPS; s++) {
+    if (s === 0 || s === 8 || s === 4 || s === 12) continue;
+    if (!drumGrid[5][s]) {
+      if (Math.random() < (s % 2 === 0 ? 0.20 : 0.08)) setDrum(5, s);
+    }
+  }
+
+  // Clap (row 4): Steps 4 & 12 always; ~25% 2,6,10,14; ~8% odd
+  setDrum(4, 4); setDrum(4, 12);
+  [2, 6, 10, 14].forEach(s => { if (Math.random() < 0.25) setDrum(4, s); });
+  for (let s = 0; s < STEPS; s++) {
+    if (s % 2 === 0 || drumGrid[4][s]) continue;
+    if (Math.random() < 0.08) setDrum(4, s);
+  }
+
+  // Snare (row 3): Steps 4 & 12 always; ~25% other even; ~8% odd
+  setDrum(3, 4); setDrum(3, 12);
+  for (let s = 0; s < STEPS; s++) {
+    if (s === 4 || s === 12 || drumGrid[3][s]) continue;
+    if (Math.random() < (s % 2 === 0 ? 0.25 : 0.08)) setDrum(3, s);
+  }
+
+  // HH1 (row 2): ~80% even; ~30% odd (busy closed hi-hat)
+  for (let s = 0; s < STEPS; s++) {
+    if (Math.random() < (s % 2 === 0 ? 0.80 : 0.30)) setDrum(2, s);
+  }
+
+  // HH2 (row 1): ~25% even; ~10% odd (sparse open hi-hat)
+  for (let s = 0; s < STEPS; s++) {
+    if (Math.random() < (s % 2 === 0 ? 0.25 : 0.10)) setDrum(1, s);
+  }
+
+  // Perc (row 0): ~20% all steps
+  for (let s = 0; s < STEPS; s++) {
+    if (Math.random() < 0.20) setDrum(0, s);
+  }
+
+  updateDrumGraph();
+}
+
+function setDrumPlaybackMode(mode) {
+  drumPlaybackMode = mode;
+}
+
+function highlightDrumPlayhead(step) {
+  document.querySelectorAll('.drum-cell.playhead').forEach(el => el.classList.remove('playhead'));
+  document.querySelectorAll(`.drum-cell[data-step="${step}"]`).forEach(el => el.classList.add('playhead'));
+}
+
+function initDrumSection() {
+  buildDrumRoll();
+  initDrumSamples();
+  document.querySelectorAll('.drum-playmode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.drum-playmode-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      setDrumPlaybackMode(btn.dataset.drumMode);
+    });
+  });
+  document.getElementById('drum-random-btn').addEventListener('click', randomDrumSeq);
+  document.getElementById('drum-clear-btn').addEventListener('click', clearDrumGrid);
+}
+
+// ─── Drum Graph Functions ───────────────────────────────────
+
+function buildDrumChordGroups() {
+  const groups = new Map();
+  for (let s = 0; s < STEPS; s++) {
+    const rows = [];
+    for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+      if (drumGrid[r][s]) rows.push(r);
+    }
+    if (rows.length > 0) {
+      const nodeIds   = rows.map(r => `drum-${r}-${s}`);
+      const anchorIdx = rows.length - 1;
+      groups.set(s, { rows, nodeIds, anchorId: nodeIds[anchorIdx], anchor: rows[anchorIdx] });
+    }
+  }
+  return groups;
+}
+
+function snapDrumStacks() {
+  drumChordGroups.forEach(({ nodeIds, anchorId }, step) => {
+    if (nodeIds.length <= 1) return;
+    const { x: ax, y: ay } = cy.getElementById(anchorId).position();
+    const angle = -Math.PI / 2 + (step / STEPS) * 2 * Math.PI;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    nodeIds.forEach((id, i) => {
+      const stepsOut = nodeIds.length - 1 - i;
+      cy.getElementById(id).position({
+        x: ax + stepsOut * NODE_STACK_SPACING * dx,
+        y: ay + stepsOut * NODE_STACK_SPACING * dy,
+      });
+    });
+  });
+}
+
+function updateDrumGraph() {
+  if (!cy) return;
+
+  drumChordGroups = buildDrumChordGroups();
+  drumStepSequence = [];
+  for (let s = 0; s < STEPS; s++) {
+    if (drumChordGroups.has(s)) drumStepSequence.push({ step: s, ...drumChordGroups.get(s) });
+  }
+
+  const activeIds = new Set([...drumChordGroups.values()].flatMap(g => g.nodeIds));
+
+  // Remove drum edges
+  cy.edges().forEach(e => {
+    const t = e.data('type');
+    if (t === 'drum-stack' || t === 'drum-sequence') e.remove();
+  });
+
+  // Stop drum ball, clear playing nodes
+  const drumBall = cy.getElementById('__drum-ball__');
+  if (drumBall.length) { drumBall.stop(); drumBall.style('opacity', 0); }
+  prevDrumPlayingNodes.forEach(n => n.removeClass('drum-playing'));
+  prevDrumPlayingNodes = [];
+
+  // Remove stale drum nodes
+  cy.nodes().forEach(node => {
+    const id = node.id();
+    if (!id.startsWith('drum-')) return;
+    if (!activeIds.has(id)) node.remove();
+  });
+
+  // Manage __drums-center__ label node
+  const drumsCenter = cy.getElementById('__drums-center__');
+  if (drumStepSequence.length === 0) {
+    if (drumsCenter.length) drumsCenter.remove();
+  } else if (!drumsCenter.length) {
+    cy.add({ data: { id: '__drums-center__', label: 'Drums' }, classes: 'drum-ring-label', position: { x: 0, y: 0 } });
+  }
+
+  // Add missing drum nodes
+  const containerW = cy.container().clientWidth  || 400;
+  const containerH = cy.container().clientHeight || 380;
+
+  drumChordGroups.forEach(({ rows, nodeIds }, step) => {
+    rows.forEach((r, i) => {
+      const id = nodeIds[i];
+      if (cy.getElementById(id).length === 0) {
+        const angle = (step / STEPS) * 2 * Math.PI - Math.PI / 2;
+        cy.add({
+          data: { id, label: DRUM_INSTRUMENTS[r].abbr },
+          classes: 'drum-node',
+          position: {
+            x: containerW / 2 + 100 * Math.cos(angle),
+            y: containerH / 2 + 100 * Math.sin(angle),
+          },
+        });
+      }
+    });
+  });
+
+  // Add drum stack edges
+  const stackEdges = [];
+  drumChordGroups.forEach(({ nodeIds }, step) => {
+    for (let i = 0; i < nodeIds.length - 1; i++) {
+      stackEdges.push({
+        data: { id: `drum-stack-${step}-${i}`, source: nodeIds[i], target: nodeIds[i + 1], type: 'drum-stack' },
+      });
+    }
+  });
+
+  // Add drum sequence edges
+  const seqEdges = [];
+  if (drumStepSequence.length >= 2) {
+    const dn = drumStepSequence.length;
+    drumStepSequence.forEach(({ step, anchorId }, i) => {
+      const next = drumStepSequence[(i + 1) % dn];
+      let dist = i < dn - 1 ? next.step - step : (STEPS - step) + next.step;
+      dist = Math.max(dist, 1);
+      seqEdges.push({
+        data: { id: `drum-seq-${i}`, source: anchorId, target: next.anchorId, dist, type: 'drum-sequence' },
+      });
+    });
+  }
+
+  if (stackEdges.length || seqEdges.length) cy.add([...stackEdges, ...seqEdges]);
+  positionAllRings();
+}
+
+function updateDrumGraphPlayhead(drumStep, nextDrumStep) {
+  if (!cy) return;
+
+  prevDrumPlayingNodes.forEach(n => n.removeClass('drum-playing'));
+  prevDrumPlayingNodes = [];
+
+  if (!drumChordGroups.has(drumStep)) return;
+
+  drumChordGroups.get(drumStep).nodeIds.forEach(id => {
+    const node = cy.getElementById(id);
+    if (node.length) { node.addClass('drum-playing'); prevDrumPlayingNodes.push(node); }
+  });
+
+  const ball = cy.getElementById('__drum-ball__');
+  if (!ball.length || drumStepSequence.length < 2) return;
+
+  const srcGroup = drumChordGroups.get(drumStep);
+  if (!srcGroup) return;
+
+  const searchArray = drumPlaybackMode === 'link' ? activeStepArray : [...Array(STEPS).keys()];
+  const sn = searchArray.length;
+  const seqPos = searchArray.indexOf(nextDrumStep);
+  let tgtGroup = null;
+  let dist = 1;
+  for (let i = 0; i < sn; i++) {
+    const gs = searchArray[(seqPos + i) % sn];
+    if (drumChordGroups.has(gs)) { tgtGroup = drumChordGroups.get(gs); dist = i + 1; break; }
+  }
+  if (!tgtGroup) return;
+
+  const srcNode = cy.getElementById(srcGroup.anchorId);
+  const tgtNode = cy.getElementById(tgtGroup.anchorId);
+  if (!srcNode.length || !tgtNode.length) return;
+
+  const stepMs   = (60 / Tone.Transport.bpm.value / 4) * 1000;
+  const duration = Math.max(dist, 1) * stepMs;
+
+  ball.stop();
+  ball.position(srcNode.position());
+  ball.style('opacity', 1);
+  ball.animate({ position: tgtNode.position(), duration, easing: 'linear' });
+}
+
+// ═══════════════════════════════════════════════════════════
 // C. GRAPH VISUALIZATION (Cytoscape.js)
 // ═══════════════════════════════════════════════════════════
 
@@ -657,12 +1038,79 @@ function initGraph() {
           'text-valign': 'center', 'text-halign': 'center',
         },
       },
+      {
+        selector: 'node.drum-node',
+        style: {
+          'width': 30, 'height': 30,
+          'background-color': '#2a0a0a',
+          'border-width': 2, 'border-color': '#ff6b6b',
+          'label': 'data(label)',
+          'font-size': '10px', 'font-family': 'monospace',
+          'color': '#ff9999',
+          'text-valign': 'center', 'text-halign': 'center',
+        },
+      },
+      {
+        selector: 'node.drum-node.drum-playing',
+        style: {
+          'background-color': '#3a1800', 'border-color': '#ffcc00',
+          'border-width': 2.5, 'color': '#ffcc00',
+        },
+      },
+      {
+        selector: 'node.drum-ball',
+        style: {
+          'width': 10, 'height': 10,
+          'background-color': '#ff6b6b',
+          'border-width': 1, 'border-color': '#ff4444',
+          'label': '', 'opacity': 0, 'z-index': 999,
+        },
+      },
+      {
+        selector: 'node.drum-ring-label',
+        style: {
+          'width': 1, 'height': 1,
+          'background-opacity': 0, 'border-width': 0,
+          'label': 'data(label)',
+          'font-size': '13px', 'font-weight': 700, 'font-family': 'monospace',
+          'color': 'rgba(255,107,107,0.55)',
+          'text-valign': 'center', 'text-halign': 'center',
+        },
+      },
+      {
+        selector: 'node.notes-ring-label',
+        style: {
+          'width': 1, 'height': 1,
+          'background-opacity': 0, 'border-width': 0,
+          'label': 'data(label)',
+          'font-size': '13px', 'font-weight': 700, 'font-family': 'monospace',
+          'color': 'rgba(0,212,170,0.3)',
+          'text-valign': 'center', 'text-halign': 'center',
+        },
+      },
+      {
+        selector: 'edge[type = "drum-stack"]',
+        style: {
+          'width': 2, 'line-color': '#4a1010',
+          'target-arrow-shape': 'none', 'source-arrow-shape': 'none',
+          'curve-style': 'straight',
+        },
+      },
+      {
+        selector: 'edge[type = "drum-sequence"]',
+        style: {
+          'width': 1.5, 'line-color': '#ff6b6b40',
+          'target-arrow-color': '#ff6b6b40', 'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier', 'arrow-scale': 0.75,
+        },
+      },
     ],
     elements: [],
     layout: { name: 'null' },
   });
 
   cy.add({ data: { id: '__ball__' }, classes: 'ball', position: { x: 0, y: 0 } });
+  cy.add({ data: { id: '__drum-ball__' }, classes: 'drum-ball', position: { x: 0, y: 0 } });
 }
 
 /** Unique node ID for one pitch occurrence at a specific step. */
@@ -736,37 +1184,71 @@ function positionAllRings() {
   const noteMinR      = n > 1 ? (NOTE_NODE / 2 + 8) / Math.sin(Math.PI / n) : 0;
   const notesR        = Math.max(noteMinR, containerMin * 0.28, 50);
 
-  // Find max chord stack depth to compute notes ring outer edge accurately
+  // Notes ring stack outer edge
   let maxStackNodes = 1;
   chordGroups.forEach(({ nodeIds }) => {
     if (nodeIds.length > maxStackNodes) maxStackNodes = nodeIds.length;
   });
-  const noteOuterEdge = notesR + (maxStackNodes - 1) * NODE_STACK_SPACING + NOTE_NODE / 2;
+  const notesStackOuter = notesR + (maxStackNodes - 1) * NODE_STACK_SPACING + NOTE_NODE / 2;
 
-  // Auto ring radius — minimum to fit 16 nodes at max size without overlap
-  const AUTO_R = Math.max(88, (AUTO_NODE_MAX / 2 + 5) / Math.sin(Math.PI / 16));
+  // Drum ring geometry
+  const drumN        = drumStepSequence.length;
+  const drumNodeSize = 30;
+  const drumMinR     = drumN > 1 ? (drumNodeSize / 2 + 6) / Math.sin(Math.PI / drumN) : 0;
+  const drumR        = drumN > 0 ? Math.max(drumMinR, containerMin * 0.22, 40) : 0;
 
-  // Minimum orbit distance to keep auto rings clear of the notes ring (including stacks)
-  const minFromNotes = noteOuterEdge + GAP + AUTO_R + AUTO_NODE_MAX / 2;
+  let maxDrumStackNodes = 1;
+  drumChordGroups.forEach(({ nodeIds }) => { if (nodeIds.length > maxDrumStackNodes) maxDrumStackNodes = nodeIds.length; });
+  const drumStackOuter = drumR + (maxDrumStackNodes - 1) * NODE_STACK_SPACING + drumNodeSize / 2;
 
-  // Minimum orbit distance to prevent adjacent auto rings from overlapping each other
-  const minFromSiblings = numAuto > 1
-    ? (AUTO_R + AUTO_NODE_MAX / 2 + GAP) / Math.sin(Math.PI / numAuto)
+  // Center notes + drum symmetrically around canvas center.
+  // drumVertOffset = distance between the two ring centers.
+  const MIN_RING_GAP = 28;
+  const drumVertOffset = drumN > 0
+    ? notesStackOuter + MIN_RING_GAP + drumStackOuter
     : 0;
 
-  const orbitDist = Math.max(minFromNotes, minFromSiblings);
+  const notesCy = cy_c - drumVertOffset / 2;
+  const drumCy  = cy_c + drumVertOffset / 2;
 
-  // Position notes ring nodes around canvas centre
+  // Position notes ring
   stepSequence.forEach(({ step, anchorId }) => {
     const angle = -Math.PI / 2 + (step / STEPS) * 2 * Math.PI;
     cy.getElementById(anchorId).position({
-      x: cx  + notesR * Math.cos(angle),
-      y: cy_c + notesR * Math.sin(angle),
+      x: cx      + notesR * Math.cos(angle),
+      y: notesCy + notesR * Math.sin(angle),
     });
   });
   snapChordStacks();
 
-  // Position auto rings as evenly spaced satellites around notes ring
+  // Position drum ring
+  drumStepSequence.forEach(({ step, anchorId }) => {
+    const angle = -Math.PI / 2 + (step / STEPS) * 2 * Math.PI;
+    cy.getElementById(anchorId).position({ x: cx + drumR * Math.cos(angle), y: drumCy + drumR * Math.sin(angle) });
+  });
+  snapDrumStacks();
+
+  const drumsCenter = cy.getElementById('__drums-center__');
+  if (drumsCenter.length) drumsCenter.position({ x: cx, y: drumCy });
+  const notesCenter = cy.getElementById('__notes-center__');
+  if (notesCenter.length) notesCenter.position({ x: cx, y: notesCy });
+
+  // Combined cluster outer radius from canvas center.
+  // Both rings are offset by drumVertOffset/2, so worst-case vertical reach is:
+  // drumVertOffset/2 + max(notesStackOuter, drumStackOuter).
+  const clusterR = drumVertOffset / 2 + Math.max(notesStackOuter, drumStackOuter);
+
+  // Auto ring radius — minimum to fit 16 nodes at max size without overlap
+  const AUTO_R = Math.max(88, (AUTO_NODE_MAX / 2 + 5) / Math.sin(Math.PI / 16));
+
+  // Orbit must clear the combined cluster and leave room for siblings (full circle).
+  const minFromCluster  = clusterR + GAP + AUTO_R + AUTO_NODE_MAX / 2;
+  const minFromSiblings = numAuto > 1
+    ? (AUTO_R + AUTO_NODE_MAX / 2 + GAP) / Math.sin(Math.PI / numAuto)
+    : 0;
+  const orbitDist = Math.max(minFromCluster, minFromSiblings);
+
+  // Position auto rings evenly around the combined canvas center (full circle).
   autoParamList.forEach((paramId, i) => {
     const orbitAngle = (i / Math.max(numAuto, 1)) * 2 * Math.PI;
     const ringCx = cx   + orbitDist * Math.cos(orbitAngle);
@@ -777,7 +1259,6 @@ function positionAllRings() {
       const a = -Math.PI / 2 + (s / 16) * 2 * Math.PI;
       node.position({ x: ringCx + AUTO_R * Math.cos(a), y: ringCy + AUTO_R * Math.sin(a) });
     }
-    // Place center label at ring centre
     const centerLabel = cy.getElementById(`__auto-center-${paramId}__`);
     if (centerLabel.length) centerLabel.position({ x: ringCx, y: ringCy });
   });
@@ -799,18 +1280,22 @@ function updateGraph() {
 
   const activeIds = new Set([...chordGroups.values()].flatMap(g => g.nodeIds));
 
-  // Remove only notes-related edges (preserve auto-ring edges)
-  cy.edges().forEach(e => { if (e.data('type') !== 'auto-ring') e.remove(); });
+  // Remove only notes-related edges (preserve auto-ring, drum-stack, drum-sequence edges)
+  cy.edges().forEach(e => {
+    const t = e.data('type');
+    if (t !== 'auto-ring' && t !== 'drum-stack' && t !== 'drum-sequence') e.remove();
+  });
   prevPlayingNodes = [];
 
   const ball = cy.getElementById('__ball__');
   if (ball.length) { ball.stop(); ball.style('opacity', 0); }
 
-  // Remove only notes nodes (preserve auto nodes and auto balls)
+  // Remove only notes nodes (preserve auto, drum nodes and balls)
   cy.nodes().forEach(node => {
     const id = node.id();
-    if (id === '__ball__') return;
+    if (id === '__ball__' || id === '__drum-ball__') return;
     if (id.startsWith('auto-') || id.startsWith('__auto-')) return;
+    if (id.startsWith('drum-') || id === '__drums-center__') return;
     if (activeIds.has(id)) {
       node.removeClass('playing');
     } else {
@@ -863,6 +1348,15 @@ function updateGraph() {
   if (stackEdges.length || seqEdges.length) {
     cy.add([...stackEdges, ...seqEdges]);
   }
+
+  // Manage Notes center label
+  const notesCenter = cy.getElementById('__notes-center__');
+  if (stepSequence.length === 0) {
+    if (notesCenter.length) notesCenter.remove();
+  } else if (!notesCenter.length) {
+    cy.add({ data: { id: '__notes-center__', label: 'Notes' }, classes: 'notes-ring-label', position: { x: 0, y: 0 } });
+  }
+
   positionAllRings();
   updateAutoBarNoteIndicators();
 }
@@ -1305,6 +1799,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSynth();
   initGraph();
   initAutoParams();
+  initDrumSection();
 
   document.getElementById('play-btn').addEventListener('click', play);
   document.getElementById('stop-btn').addEventListener('click', stop);
@@ -1337,6 +1832,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   makeCollapseToggle('seq-toggle',   'seq-body');
+  makeCollapseToggle('drum-toggle',  'drum-body');
   makeCollapseToggle('graph-toggle', 'graph-wrap', fitGraph);
 
   let resizeTimer = null;

@@ -352,22 +352,6 @@ h1 {
   align-items: center;
 }
 
-#random-btn {
-  padding: 5px 14px;
-  background: #1c1c38;
-  color: #00d4aa;
-  border: 1px solid #00d4aa44;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-family: inherit;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-}
-
-#random-btn:hover {
-  background: #00d4aa1a;
-  border-color: #00d4aa;
-}
 
 /* Pitch controls (Octave + Root) */
 
@@ -544,7 +528,7 @@ h1 {
   grid-template-columns: 48px repeat(16, 1fr);
   grid-template-rows: 22px repeat(13, 30px);
   gap: 2px;
-  padding: 12px 16px 8px;
+  padding: 12px 62px 8px 16px; /* right=62px matches drum-roll's 44px mute col + 2px gap + 16px padding */
   background: #0d0d1a;
   flex-shrink: 0;
 }
@@ -599,6 +583,129 @@ h1 {
   background: #ffcc00;
   border-color: #ffcc00;
   box-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
+}
+
+/* ─── Drum Roll ──────────────────────────────────────────── */
+
+#drum-roll-wrap {
+  display: flex;
+  align-items: stretch;
+  padding: 12px 16px 8px;
+  background: #0d0d1a;
+  gap: 2px;
+}
+
+#drum-roll {
+  display: grid;
+  grid-template-columns: 48px repeat(16, 1fr);
+  grid-template-rows: 22px repeat(6, 30px);
+  gap: 2px;
+  flex: 1;
+}
+
+#drum-mute-col {
+  display: grid;
+  grid-template-rows: 22px repeat(6, 30px);
+  gap: 2px;
+  width: 44px;
+  flex-shrink: 0;
+}
+
+.dr-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  font-size: 10px;
+  font-family: monospace;
+  color: #664444;
+  user-select: none;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dr-step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-family: monospace;
+  color: #3a3a58;
+  user-select: none;
+}
+
+.drum-cell {
+  background: #191929;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid #1e1e38;
+  transition: background 0.07s, border-color 0.07s, box-shadow 0.07s;
+}
+
+.drum-cell:hover { background: #221824; border-color: #3a2a2a; }
+
+.drum-cell.active {
+  background: #ff6b6b;
+  border-color: #ff6b6b;
+  box-shadow: 0 0 8px rgba(255,107,107,0.35);
+}
+
+.drum-cell.playhead { background: #1c1c38; border-color: #303060; }
+
+.drum-cell.active.playhead {
+  background: #ffcc00;
+  border-color: #ffcc00;
+  box-shadow: 0 0 10px rgba(255,204,0,0.5);
+}
+
+.drum-cell.muted { opacity: 0.3; }
+
+.drum-mute-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1c1c38;
+  color: #555;
+  border: 1px solid #2a2a3a;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.65rem;
+  font-family: monospace;
+  font-weight: 700;
+  text-transform: uppercase;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.drum-mute-btn.muted {
+  background: #ff6b6b1a;
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+.drum-section-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  padding-left: 12px;
+}
+
+.drum-playmode-btn {
+  padding: 3px 10px;
+  background: #1c1c38;
+  color: #777;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.drum-playmode-btn.selected {
+  background: #ff6b6b1a;
+  border-color: #ff6b6b;
+  color: #ff6b6b;
 }
 
 /* ── SEQ toggle button ─────────────────────────────────── */

@@ -109,7 +109,6 @@
         </div>
       </div>
       <div class="seq-actions">
-        <button id="random-btn">&#9861; Random Seq</button>
         <button id="clear-btn">&#10005; Clear All</button>
       </div>
     </div>
@@ -151,6 +150,7 @@
       <button class="seq-tab active" data-tab="notes" style="--tab-color: #00d4aa;">Notes</button>
       <!-- param tabs injected dynamically -->
     </div>
+    <button class="seq-action-btn" id="random-btn" title="Random seq for active tab">Rnd</button>
     <button class="seq-action-btn" id="seq-clear-btn" title="Clear current sequencer">Clr</button>
     <button class="collapse-btn" id="seq-toggle">&#9660;</button>
   </div>
@@ -158,6 +158,18 @@
     <div id="piano-roll"></div>
     <div id="auto-seq-panel" style="display:none;"></div>
   </div>
+
+  <div class="section-bar" id="drum-section-bar">
+    <span class="section-label">Drums</span>
+    <div class="drum-section-controls">
+      <button class="drum-playmode-btn selected" data-drum-mode="forward">&#9654; Fwd</button>
+      <button class="drum-playmode-btn" data-drum-mode="link">&#128279; Link</button>
+    </div>
+    <button class="seq-action-btn" id="drum-random-btn" title="Generate random drum pattern">Rnd</button>
+    <button class="seq-action-btn" id="drum-clear-btn" title="Clear drum pattern">Clr</button>
+    <button class="collapse-btn" id="drum-toggle">&#9660;</button>
+  </div>
+  <div id="drum-body"></div>
 
   <div class="section-bar">
     <span class="section-label">Graph</span>
