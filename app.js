@@ -408,8 +408,8 @@ function initSynth() {
   const rawCtxInit = Tone.getContext().rawContext;
   for (let r = 0; r < NUM_DRUM_ROWS; r++) {
     drumTrackGain[r] = rawCtxInit.createGain();
-    drumTrackGain[r].gain.value = 1.0;
-    drumTrackVolume[r] = 1.0;
+    drumTrackGain[r].gain.value = 0.708; // −3 dB default (10^(−3/20))
+    drumTrackVolume[r] = 0.708;
     drumTrackGain[r].connect(drumBus.input);
   }
 
