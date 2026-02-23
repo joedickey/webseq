@@ -121,8 +121,10 @@ for (let r = 0; r < NUM_ROWS; r++) { grid[r] = new Array(STEPS).fill(false); }
 // Drum state
 const drumGrid    = {};
 const drumMuted   = {};
-const drumPlayers = {};
+const drumPlayers = {};   // Tone.Buffer instances — used only for URL loading
+const drumBuffers = {};   // raw AudioBuffer per row — used for direct sample-accurate triggering
 const drumOffsets = {};   // per-row leading-silence offset (seconds) to skip MP3 encoder delay
+let   drumBus     = null; // Tone.Gain — routes raw drum hits through masterVol
 for (let r = 0; r < NUM_DRUM_ROWS; r++) {
   drumGrid[r]  = new Array(STEPS).fill(false);
   drumMuted[r] = false;
@@ -305,10 +307,18 @@ function buildLoop() {
     // In link mode, drums follow the synth step — skip on duplicate to avoid sample click
     const skipDrumTrigger = isDuplicate && drumPlaybackMode === 'link';
     if (!skipDrumTrigger) {
+      // Create a fresh one-shot AudioBufferSourceNode per hit for sample-accurate scheduling.
+      // This bypasses Tone.Player's state machine entirely — the hit lands exactly at `time`.
+      const rawCtx = Tone.getContext().rawContext;
       for (let r = 0; r < NUM_DRUM_ROWS; r++) {
         if (!drumMuted[r] && drumGrid[r][drumStep]) {
-          const p = drumPlayers[r];
-          if (p) { p.stop(time); p.start(time, drumOffsets[r] || 0); }
+          const buf = drumBuffers[r];
+          if (buf && drumBus) {
+            const src = rawCtx.createBufferSource();
+            src.buffer = buf;
+            src.connect(drumBus.input); // drumBus.input is the native GainNode in Tone.js v14
+            src.start(time, drumOffsets[r] || 0);
+          }
         }
       }
     }
@@ -348,6 +358,11 @@ function initSynth() {
   reverb.connect(softLimit);
   softLimit.connect(masterVol);
   masterVol.toDestination();
+
+  // Drum bus: raw AudioBufferSourceNodes connect here → masterVol → destination.
+  // drumBus.input is the native GainNode in Tone.js v14, which raw nodes can connect to.
+  drumBus = new Tone.Gain(1);
+  drumBus.connect(masterVol);
 
   buildLoop();
 }
@@ -671,17 +686,19 @@ function setRootNote(semitone) {
 // ═══════════════════════════════════════════════════════════
 
 async function initDrumSamples() {
+  // Use Tone.Buffer (lightweight — just loads/decodes the URL, no Player state machine)
   DRUM_INSTRUMENTS.forEach((inst, row) => {
-    drumPlayers[row] = new Tone.Player({ url: inst.url, autostart: false, fadeIn: 0, fadeOut: 0 }).connect(masterVol);
+    drumPlayers[row] = new Tone.Buffer(inst.url);
   });
   const playBtn = document.getElementById('play-btn');
   playBtn.disabled = true;
   playBtn.innerHTML = '&#8987; Loading';
   await Tone.loaded();
-  // Scan each decoded buffer for the first non-silent sample to compensate for MP3 encoder
-  // priming delay (~13–26 ms of silence that precedes the actual transient in MP3 files).
+  // Extract raw AudioBuffers and detect per-sample leading-silence offset to compensate
+  // for MP3 encoder priming delay (~13–26 ms of silence before the actual transient).
   for (let r = 0; r < NUM_DRUM_ROWS; r++) {
-    const buf = drumPlayers[r].buffer.get();
+    const buf = drumPlayers[r].get();
+    drumBuffers[r] = buf;
     drumOffsets[r] = 0;
     if (buf) {
       const data = buf.getChannelData(0);
