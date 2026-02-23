@@ -308,7 +308,7 @@ function buildLoop() {
       for (let r = 0; r < NUM_DRUM_ROWS; r++) {
         if (!drumMuted[r] && drumGrid[r][drumStep]) {
           const p = drumPlayers[r];
-          if (p && p.loaded) { p.stop(time); p.start(time); }
+          if (p) { p.stop(time); p.start(time); }
         }
       }
     }
@@ -666,10 +666,16 @@ function setRootNote(semitone) {
 // B2. DRUM SEQUENCER
 // ═══════════════════════════════════════════════════════════
 
-function initDrumSamples() {
+async function initDrumSamples() {
   DRUM_INSTRUMENTS.forEach((inst, row) => {
     drumPlayers[row] = new Tone.Player({ url: inst.url, autostart: false, fadeIn: 0, fadeOut: 0 }).connect(masterVol);
   });
+  const playBtn = document.getElementById('play-btn');
+  playBtn.disabled = true;
+  playBtn.innerHTML = '&#8987; Loading';
+  await Tone.loaded();
+  playBtn.disabled = false;
+  playBtn.innerHTML = '&#9654; Play';
 }
 
 function buildDrumRoll() {
@@ -1863,6 +1869,9 @@ document.addEventListener('DOMContentLoaded', () => {
   initAutoParams();
   initDrumSection();
   initMetronome();
+
+  // Warm up AudioContext on first interaction so it's ready before Play is pressed
+  document.addEventListener('pointerdown', async () => { await Tone.start(); }, { once: true });
 
   document.getElementById('play-btn').addEventListener('click', play);
   document.getElementById('metro-btn').addEventListener('click', toggleMetronome);
