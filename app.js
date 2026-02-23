@@ -402,7 +402,7 @@ function initSynth() {
   // Drum bus: raw AudioBufferSourceNodes connect here → masterVol → destination.
   // Fixed −1.5 dB trim on the bus so samples sit slightly below full-scale by default
   // while per-track faders still default to 1.0 (max).
-  drumBus = new Tone.Gain(0.841); // 0.841 = 10^(−1.5/20) = −1.5 dB
+  drumBus = new Tone.Gain(0.944); // 0.944 = 10^(−0.5/20) = −0.5 dB
   drumBus.connect(masterVol);
 
   // Per-track gain nodes (faders): src → drumTrackGain[r] → drumBus → masterVol
