@@ -273,12 +273,22 @@ function buildLoop() {
     prevStep = step;
     seqPosition = nextPos;
 
+    // Suppress the correct tick at each ping-pong turnaround so every step plays exactly once
+    // and the gap between adjacent steps is always exactly 1×16th note (no "hang"):
+    //   fwd→rev (step 15): suppress SECOND occurrence (position 16, isDuplicate=true, step≠0)
+    //   rev→fwd (step  0): suppress FIRST  occurrence (position 31, seqPosition just wrapped to 0)
+    //                      and ALLOW  SECOND occurrence (position 0, isDuplicate=true) to play
+    //                      cleanly as the downbeat of the new forward phase.
+    const isSuppressedTick =
+      (isDuplicate && step !== 0) ||
+      (playbackMode === 'pingpong' && !isDuplicate && step === 0 && seqPosition === 0);
+
     // Collect active notes for this step using current NOTES mapping
     const activeNotes = [];
     for (let r = 0; r < NUM_ROWS; r++) {
       if (grid[r][step]) activeNotes.push(NOTES[r]);
     }
-    if (activeNotes.length > 0 && !isDuplicate) {
+    if (activeNotes.length > 0 && !isSuppressedTick) {
       // Equal-power polyphony compensation: 1/√n velocity per voice
       const velocity = 1 / Math.sqrt(activeNotes.length);
       synth.triggerAttackRelease(activeNotes, '16n', time, velocity);
@@ -304,8 +314,8 @@ function buildLoop() {
       drumNextSearchIdx = nextDrumPos; // position in [0..15] forward array (equals step value)
       drumSeqPosition = nextDrumPos;
     }
-    // In link mode, drums follow the synth step — skip on duplicate to avoid sample click
-    const skipDrumTrigger = isDuplicate && drumPlaybackMode === 'link';
+    // In link mode, drums follow the synth step — use same suppression as synth
+    const skipDrumTrigger = drumPlaybackMode === 'link' && isSuppressedTick;
     if (!skipDrumTrigger) {
       // Create a fresh one-shot AudioBufferSourceNode per hit for sample-accurate scheduling.
       // This bypasses Tone.Player's state machine entirely — the hit lands exactly at `time`.
