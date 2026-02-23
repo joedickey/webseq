@@ -119,12 +119,18 @@ const grid = {};
 for (let r = 0; r < NUM_ROWS; r++) { grid[r] = new Array(STEPS).fill(false); }
 
 // Drum state
-const drumGrid    = {};
-const drumMuted   = {};
-const drumPlayers = {};   // Tone.Buffer instances — used only for URL loading
-const drumBuffers = {};   // raw AudioBuffer per row — used for direct sample-accurate triggering
-const drumOffsets = {};   // per-row leading-silence offset (seconds) to skip MP3 encoder delay
-let   drumBus     = null; // Tone.Gain — routes raw drum hits through masterVol
+const drumGrid       = {};
+const drumMuted      = {};
+const drumPlayers    = {};   // Tone.Buffer instances — used only for URL loading
+const drumBuffers    = {};   // raw AudioBuffer per row — used for direct sample-accurate triggering
+const drumOffsets    = {};   // per-row leading-silence offset (seconds) to skip MP3 encoder delay
+const drumTrackGain  = {};   // raw GainNode per row — per-track volume control
+const drumTrackVolume = {};  // 0..1 per row (mirrors drumTrackGain gain value for UI)
+let   drumBus        = null; // Tone.Gain — routes all drum tracks through masterVol
+
+// Whole-sequencer mutes
+let notesMuted   = false;
+let drumSeqMuted = false;
 for (let r = 0; r < NUM_DRUM_ROWS; r++) {
   drumGrid[r]  = new Array(STEPS).fill(false);
   drumMuted[r] = false;
@@ -288,7 +294,7 @@ function buildLoop() {
     for (let r = 0; r < NUM_ROWS; r++) {
       if (grid[r][step]) activeNotes.push(NOTES[r]);
     }
-    if (activeNotes.length > 0 && !isSuppressedTick) {
+    if (activeNotes.length > 0 && !isSuppressedTick && !notesMuted) {
       // Equal-power polyphony compensation: 1/√n velocity per voice
       const velocity = 1 / Math.sqrt(activeNotes.length);
       synth.triggerAttackRelease(activeNotes, '16n', time, velocity);
@@ -316,17 +322,17 @@ function buildLoop() {
     }
     // In link mode, drums follow the synth step — use same suppression as synth
     const skipDrumTrigger = drumPlaybackMode === 'link' && isSuppressedTick;
-    if (!skipDrumTrigger) {
+    if (!skipDrumTrigger && !drumSeqMuted) {
       // Create a fresh one-shot AudioBufferSourceNode per hit for sample-accurate scheduling.
       // This bypasses Tone.Player's state machine entirely — the hit lands exactly at `time`.
       const rawCtx = Tone.getContext().rawContext;
       for (let r = 0; r < NUM_DRUM_ROWS; r++) {
         if (!drumMuted[r] && drumGrid[r][drumStep]) {
           const buf = drumBuffers[r];
-          if (buf && drumBus) {
+          if (buf && drumTrackGain[r]) {
             const src = rawCtx.createBufferSource();
             src.buffer = buf;
-            src.connect(drumBus.input); // drumBus.input is the native GainNode in Tone.js v14
+            src.connect(drumTrackGain[r]); // per-track gain → drumBus → masterVol
             src.start(time, drumOffsets[r] || 0);
           }
         }
@@ -374,6 +380,15 @@ function initSynth() {
   drumBus = new Tone.Gain(1);
   drumBus.connect(masterVol);
 
+  // Per-track gain nodes: src → drumTrackGain[r] → drumBus → masterVol
+  const rawCtxInit = Tone.getContext().rawContext;
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+    drumTrackGain[r] = rawCtxInit.createGain();
+    drumTrackGain[r].gain.value = 1.0;
+    drumTrackVolume[r] = 1.0;
+    drumTrackGain[r].connect(drumBus.input);
+  }
+
   buildLoop();
 }
 
@@ -384,7 +399,7 @@ function initMetronome() {
   metronomeSynth = new Tone.Synth({
     oscillator: { type: 'triangle' },
     envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.005 },
-    volume: -8,
+    volume: -5,
   }).connect(masterVol);
 }
 
@@ -754,10 +769,54 @@ function buildDrumRoll() {
 
   // Instrument rows
   for (let r = 0; r < NUM_DRUM_ROWS; r++) {
-    const lbl = document.createElement('div');
-    lbl.className = 'dr-label';
-    lbl.textContent = DRUM_INSTRUMENTS[r].label;
-    container.appendChild(lbl);
+    // Volume slider — horizontal bar with draggable fill, replaces the static label
+    const volSlider = document.createElement('div');
+    volSlider.className = 'dr-vol-slider';
+    volSlider.title = DRUM_INSTRUMENTS[r].label + ' volume';
+
+    const fill = document.createElement('div');
+    fill.className = 'dr-vol-fill';
+    fill.style.width = (drumTrackVolume[r] * 100) + '%';
+
+    const lbl = document.createElement('span');
+    lbl.className = 'dr-vol-text';
+    lbl.textContent = DRUM_INSTRUMENTS[r].abbr;
+
+    volSlider.appendChild(fill);
+    volSlider.appendChild(lbl);
+    container.appendChild(volSlider);
+
+    // Click or drag to set volume — position within bar maps to 0..1
+    volSlider.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const setVol = (clientX) => {
+        const rect = volSlider.getBoundingClientRect();
+        const vol = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        drumTrackVolume[r] = vol;
+        drumTrackGain[r].gain.setTargetAtTime(vol, Tone.getContext().rawContext.currentTime, 0.01);
+        fill.style.width = (vol * 100) + '%';
+      };
+      setVol(e.clientX);
+      const onMove = (me) => setVol(me.clientX);
+      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    volSlider.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const setVol = (clientX) => {
+        const rect = volSlider.getBoundingClientRect();
+        const vol = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        drumTrackVolume[r] = vol;
+        drumTrackGain[r].gain.setTargetAtTime(vol, Tone.getContext().rawContext.currentTime, 0.01);
+        fill.style.width = (vol * 100) + '%';
+      };
+      setVol(e.touches[0].clientX);
+      const onMove = (te) => setVol(te.touches[0].clientX);
+      const onEnd = () => { volSlider.removeEventListener('touchmove', onMove); volSlider.removeEventListener('touchend', onEnd); };
+      volSlider.addEventListener('touchmove', onMove, { passive: false });
+      volSlider.addEventListener('touchend', onEnd);
+    }, { passive: false });
 
     for (let s = 0; s < STEPS; s++) {
       const cell = document.createElement('div');
@@ -1922,6 +1981,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('stop-btn').addEventListener('click', stop);
   document.getElementById('clear-btn').addEventListener('click', clearAll);
   document.getElementById('seq-clear-btn').addEventListener('click', clearCurrentSeq);
+  document.getElementById('notes-mute-btn').addEventListener('click', () => {
+    notesMuted = !notesMuted;
+    document.getElementById('notes-mute-btn').classList.toggle('active', notesMuted);
+  });
+  document.getElementById('drum-seq-mute-btn').addEventListener('click', () => {
+    drumSeqMuted = !drumSeqMuted;
+    document.getElementById('drum-seq-mute-btn').classList.toggle('active', drumSeqMuted);
+  });
   document.getElementById('random-btn').addEventListener('click', () => {
     if (activeTab === 'notes') randomSeq();
     else randomizeAutoSeq(activeTab);

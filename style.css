@@ -649,6 +649,36 @@ h1 {
   letter-spacing: 0.5px;
 }
 
+/* Per-track horizontal volume slider (replaces .dr-label on instrument rows) */
+.dr-vol-slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  user-select: none;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #110d0d;
+}
+.dr-vol-fill {
+  position: absolute;
+  left: 0; top: 0;
+  height: 100%;
+  background: #3a1010;
+  pointer-events: none;
+}
+.dr-vol-text {
+  position: relative;
+  z-index: 1;
+  font-size: 9px;
+  font-family: monospace;
+  color: #cc6666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+}
+
 .dr-step-num {
   display: flex;
   align-items: center;
@@ -888,6 +918,7 @@ h1 {
   transition: color 0.12s, border-color 0.12s;
 }
 .seq-action-btn:hover { color: #c06060; border-color: #5a2a2a; }
+.seq-action-btn.active { color: #ff6b6b; border-color: #ff6b6b; background: #ff6b6b1a; }
 
 /* ─── Graph ───────────────────────────────────── */
 
