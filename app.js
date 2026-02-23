@@ -122,6 +122,7 @@ for (let r = 0; r < NUM_ROWS; r++) { grid[r] = new Array(STEPS).fill(false); }
 const drumGrid    = {};
 const drumMuted   = {};
 const drumPlayers = {};
+const drumOffsets = {};   // per-row leading-silence offset (seconds) to skip MP3 encoder delay
 for (let r = 0; r < NUM_DRUM_ROWS; r++) {
   drumGrid[r]  = new Array(STEPS).fill(false);
   drumMuted[r] = false;
@@ -151,7 +152,6 @@ let isPlaying  = false;
 let metronomeEnabled = false;
 let metronomeLoop    = null;
 let metronomeSynth   = null;
-let metronomeBeat    = 0;
 
 let prevPlayingNodes = [];
 
@@ -308,7 +308,7 @@ function buildLoop() {
       for (let r = 0; r < NUM_DRUM_ROWS; r++) {
         if (!drumMuted[r] && drumGrid[r][drumStep]) {
           const p = drumPlayers[r];
-          if (p) { p.stop(time); p.start(time); }
+          if (p) { p.stop(time); p.start(time, drumOffsets[r] || 0); }
         }
       }
     }
@@ -365,12 +365,17 @@ function initMetronome() {
 
 function startMetronomeLoop() {
   if (metronomeLoop !== null) { Tone.Transport.clear(metronomeLoop); metronomeLoop = null; }
-  metronomeBeat = 0;
+  // Align the first tick to the next quarter-note boundary so the accent always tracks
+  // beat 1 of the global transport clock, even when enabled mid-playback.
+  const ppq = Tone.Transport.PPQ;
+  const remainder = Tone.Transport.ticks % ppq;
+  const startOffset = remainder === 0 ? '+0i' : `+${ppq - remainder}i`;
   metronomeLoop = Tone.Transport.scheduleRepeat((time) => {
-    const isDown = metronomeBeat === 0;
+    // Derive beat-in-bar from transport ticks — always correct regardless of when enabled
+    const beatInBar = Math.floor(Tone.Transport.ticks / ppq) % 4;
+    const isDown = beatInBar === 0;
     metronomeSynth.triggerAttackRelease(isDown ? 'B5' : 'E5', 0.03, time, isDown ? 0.75 : 0.45);
-    metronomeBeat = (metronomeBeat + 1) % 4;
-  }, '4n');
+  }, '4n', startOffset);
 }
 
 function toggleMetronome() {
@@ -416,7 +421,6 @@ function stop() {
   isPlaying = false;
   seqPosition = 0;
   prevStep = -1;
-  metronomeBeat = 0;
   if (pendingPlaybackMode !== null) {
     playbackMode = pendingPlaybackMode;
     pendingPlaybackMode = null;
@@ -674,6 +678,19 @@ async function initDrumSamples() {
   playBtn.disabled = true;
   playBtn.innerHTML = '&#8987; Loading';
   await Tone.loaded();
+  // Scan each decoded buffer for the first non-silent sample to compensate for MP3 encoder
+  // priming delay (~13–26 ms of silence that precedes the actual transient in MP3 files).
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+    const buf = drumPlayers[r].buffer.get();
+    drumOffsets[r] = 0;
+    if (buf) {
+      const data = buf.getChannelData(0);
+      const threshold = 0.003; // ~0.3% of full scale
+      for (let i = 0; i < data.length; i++) {
+        if (Math.abs(data[i]) > threshold) { drumOffsets[r] = i / buf.sampleRate; break; }
+      }
+    }
+  }
   playBtn.disabled = false;
   playBtn.innerHTML = '&#9654; Play';
 }
