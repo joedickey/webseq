@@ -178,6 +178,491 @@ let activeStepArray     = [];
 let seqPosition         = 0;
 let prevStep            = -1;  // for ping-pong: detect duplicate turnaround steps
 
+// ─── Pattern Bank State ──────────────────────────────────────
+const notesPatterns = [];        // Array of saved notes pattern objects
+const drumPatterns  = [];        // Array of saved drum pattern objects
+let activeNotesPatternId = null; // ID of currently active notes pattern (null = unsaved live)
+let activeDrumPatternId  = null;
+let pendingNotesSwitch   = null; // queued pattern ID, applied at loop boundary
+let pendingDrumSwitch    = null;
+let notesNameCounter     = 0;    // for auto-naming: A, B, C, ...
+let drumNameCounter      = 0;
+
+// ═══════════════════════════════════════════════════════════
+// PATTERN BANK — snapshot / restore / thumbnail
+// ═══════════════════════════════════════════════════════════
+
+function deepCopyGrid(src, rows) {
+  const copy = {};
+  for (let r = 0; r < rows; r++) copy[r] = src[r].slice();
+  return copy;
+}
+
+/** Capture the full notes synth scene into a pattern object. */
+function snapshotNotesPattern() {
+  // Deep copy automation sequences
+  const seqsCopy = {};
+  for (const paramId in autoSeqs) {
+    seqsCopy[paramId] = new Float64Array(autoSeqs[paramId]);
+  }
+
+  // Read current slider / button states from DOM
+  const fltFreqEl = document.getElementById('flt-freq');
+  const fltQEl    = document.getElementById('flt-q');
+  const rvbSendEl = document.getElementById('rvb-send');
+  const rvbDecEl  = document.getElementById('rvb-decay');
+  const adsrAEl   = document.getElementById('adsr-a');
+  const adsrDEl   = document.getElementById('adsr-d');
+  const adsrSEl   = document.getElementById('adsr-s');
+  const adsrREl   = document.getElementById('adsr-r');
+  const selWave   = document.querySelector('.waveform-btn.selected');
+  const selFilter = document.querySelector('.filter-type-btn.selected');
+
+  return {
+    grid: deepCopyGrid(grid, NUM_ROWS, STEPS),
+    autoSeqs: seqsCopy,
+    autoActive: new Set(autoActive),
+    octaveOffset,
+    rootSemitone,
+    sliderValues: {
+      filterFreq: parseFloat(fltFreqEl.value),
+      filterQ:    parseFloat(fltQEl.value),
+      filterType: selFilter ? selFilter.dataset.type : 'lowpass',
+      reverbSend: parseFloat(rvbSendEl.value),
+      reverbDecay: parseFloat(rvbDecEl.value),
+      attack:  parseFloat(adsrAEl.value),
+      decay:   parseFloat(adsrDEl.value),
+      sustain: parseFloat(adsrSEl.value),
+      release: parseFloat(adsrREl.value),
+      waveform: selWave ? selWave.dataset.wave : 'sine',
+    },
+  };
+}
+
+/** Capture drum state into a pattern object. */
+function snapshotDrumPattern() {
+  const mutedCopy = {};
+  const volCopy   = {};
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+    mutedCopy[r] = drumMuted[r];
+    volCopy[r]   = drumTrackVolume[r];
+  }
+  return {
+    drumGrid: deepCopyGrid(drumGrid, NUM_DRUM_ROWS, STEPS),
+    drumMuted: mutedCopy,
+    drumTrackVolume: volCopy,
+  };
+}
+
+/** Restore a notes pattern into live state. Fast — JS writes only; DOM deferred. */
+function restoreNotesPattern(pattern) {
+  // Grid
+  for (let r = 0; r < NUM_ROWS; r++) {
+    for (let s = 0; s < STEPS; s++) grid[r][s] = pattern.grid[r][s];
+  }
+
+  // Automation: exit params not in this pattern, enter ones that are
+  const targetActive = pattern.autoActive;
+  const toExit  = [...autoActive].filter(p => !targetActive.has(p));
+  const toEnter = [...targetActive].filter(p => !autoActive.has(p));
+  toExit.forEach(p => exitSeqMode(p));
+  toEnter.forEach(p => {
+    // Pre-fill autoSeqs so enterSeqMode doesn't overwrite with slider default
+    if (pattern.autoSeqs[p]) autoSeqs[p] = new Float64Array(pattern.autoSeqs[p]);
+    enterSeqMode(p);
+  });
+  // Update seq data for params already active
+  for (const paramId of autoActive) {
+    if (pattern.autoSeqs[paramId]) {
+      autoSeqs[paramId] = new Float64Array(pattern.autoSeqs[paramId]);
+      refreshAutoSeqPanel(paramId);
+      for (let s = 0; s < 16; s++) updateAutoGraphNode(paramId, s);
+    }
+  }
+
+  // Octave / root
+  octaveOffset = pattern.octaveOffset;
+  rootSemitone = pattern.rootSemitone;
+  NOTES        = getCurrentNotes();
+  NOTE_LABELS  = getCurrentNoteLabels();
+
+  // Slider values + audio params
+  const sv = pattern.sliderValues;
+  setSliderAndAudio('flt-freq',  sv.filterFreq,  v => { if (filter) filter.frequency.value = freqFromSlider(v); });
+  setSliderAndAudio('flt-q',     sv.filterQ,     v => { if (filter) filter.Q.value = v; });
+  setSliderAndAudio('rvb-send',  sv.reverbSend,  v => { if (reverbSend) reverbSend.gain.value = v; });
+  setSliderAndAudio('rvb-decay', sv.reverbDecay,  v => { if (reverb) { reverb.decay = v; clearTimeout(reverbDecayAutoTimer); reverbDecayAutoTimer = setTimeout(() => reverb.generate(), 500); } });
+  setSliderAndAudio('adsr-a',    sv.attack,   v => setEnvelope('attack', v));
+  setSliderAndAudio('adsr-d',    sv.decay,    v => setEnvelope('decay', v));
+  setSliderAndAudio('adsr-s',    sv.sustain,  v => setEnvelope('sustain', v));
+  setSliderAndAudio('adsr-r',    sv.release,  v => setEnvelope('release', v));
+
+  // Waveform button
+  setWaveform(sv.waveform);
+  document.querySelectorAll('.waveform-btn').forEach(b => {
+    b.classList.toggle('selected', b.dataset.wave === sv.waveform);
+  });
+
+  // Filter type button
+  document.querySelectorAll('.filter-type-btn').forEach(b => {
+    b.classList.toggle('selected', b.dataset.type === sv.filterType);
+  });
+  if (filter) filter.type = sv.filterType;
+}
+
+/** Helper: set a slider element value, update its display, and apply audio change. */
+function setSliderAndAudio(sliderId, value, applyFn) {
+  const slider = document.getElementById(sliderId);
+  if (!slider) return;
+  slider.value = value;
+  slider.dispatchEvent(new Event('input', { bubbles: true }));
+  applyFn(value);
+}
+
+/** Restore a drum pattern into live state. */
+function restoreDrumPattern(pattern) {
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+    for (let s = 0; s < STEPS; s++) drumGrid[r][s] = pattern.drumGrid[r][s];
+    drumMuted[r] = pattern.drumMuted[r];
+    drumTrackVolume[r] = pattern.drumTrackVolume[r];
+    if (drumTrackGain[r]) {
+      drumTrackGain[r].gain.value = pattern.drumTrackVolume[r];
+    }
+  }
+}
+
+/** Refresh all drum UI elements to match current drumGrid/drumMuted/drumTrackVolume state. */
+function refreshDrumUI() {
+  // Grid cells
+  document.querySelectorAll('.drum-cell').forEach(cell => {
+    const r = parseInt(cell.dataset.row), s = parseInt(cell.dataset.step);
+    cell.classList.toggle('active', drumGrid[r][s]);
+    cell.classList.toggle('muted', drumMuted[r]);
+  });
+  // Mute buttons
+  document.querySelectorAll('.drum-mute-btn').forEach(btn => {
+    const r = parseInt(btn.dataset.row);
+    btn.classList.toggle('muted', drumMuted[r]);
+  });
+  // Volume slider fills
+  document.querySelectorAll('.dr-vol-slider').forEach((slider, idx) => {
+    const fill = slider.querySelector('.dr-vol-fill');
+    if (fill) fill.style.width = (drumTrackVolume[idx] * 100) + '%';
+  });
+}
+
+/** Refresh notes grid UI to match current grid state. */
+function refreshNotesUI() {
+  document.querySelectorAll('.step-cell').forEach(cell => {
+    const r = parseInt(cell.dataset.row), s = parseInt(cell.dataset.step);
+    if (!isNaN(r) && !isNaN(s)) cell.classList.toggle('active', grid[r][s]);
+  });
+  rebuildPianoRollLabels();
+  document.getElementById('oct-display').textContent = 4 + octaveOffset;
+  document.querySelectorAll('.root-btn').forEach(b => {
+    b.classList.toggle('selected', parseInt(b.dataset.semitone) === rootSemitone);
+  });
+}
+
+/** Generate a radial dot-plot thumbnail for a pattern. Returns a data URL. */
+function generateThumbnail(type, pattern) {
+  const size = 80;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  const cx = size / 2;
+  const cy_t = size / 2;
+  const radius = size * 0.35;
+  const color = type === 'notes' ? '#00d4aa' : '#ff6b6b';
+  const gridData = type === 'notes' ? pattern.grid : pattern.drumGrid;
+  const numRows = type === 'notes' ? NUM_ROWS : NUM_DRUM_ROWS;
+
+  ctx.fillStyle = '#0d0d1a';
+  ctx.fillRect(0, 0, size, size);
+
+  // Draw faint circle guide
+  ctx.beginPath();
+  ctx.arc(cx, cy_t, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = type === 'notes' ? 'rgba(0,212,170,0.15)' : 'rgba(255,107,107,0.15)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  for (let s = 0; s < STEPS; s++) {
+    let count = 0;
+    for (let r = 0; r < numRows; r++) {
+      if (gridData[r] && gridData[r][s]) count++;
+    }
+    if (count === 0) continue;
+
+    const angle = -Math.PI / 2 + (s / STEPS) * 2 * Math.PI;
+    const x = cx + radius * Math.cos(angle);
+    const y = cy_t + radius * Math.sin(angle);
+    const dotR = 2 + Math.min(count, 6) * 1.2;
+
+    ctx.beginPath();
+    ctx.arc(x, y, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.7 + 0.3 * Math.min(count / numRows, 1);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+/** Auto-name generator: "Notes A", "Notes B", ..., "Notes AA", etc. */
+function autoNotesName() {
+  const idx = notesNameCounter++;
+  let name = '';
+  let n = idx;
+  do {
+    name = String.fromCharCode(65 + (n % 26)) + name;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return 'Notes ' + name;
+}
+
+function autoDrumName() {
+  return 'Beat ' + (++drumNameCounter);
+}
+
+/** Save (or update) the current notes pattern. */
+function saveNotesPattern() {
+  const snapshot = snapshotNotesPattern();
+
+  if (activeNotesPatternId !== null) {
+    // Update existing pattern in place
+    const existing = notesPatterns.find(p => p.id === activeNotesPatternId);
+    if (existing) {
+      Object.assign(existing, snapshot);
+      existing.thumbnail = generateThumbnail('notes', existing);
+      rebuildPatternThumbnails();
+      return;
+    }
+  }
+
+  // New pattern
+  const id = crypto.randomUUID ? crypto.randomUUID() : 'np-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  const pattern = {
+    id,
+    name: autoNotesName(),
+    type: 'notes',
+    ...snapshot,
+    thumbnail: '',
+  };
+  pattern.thumbnail = generateThumbnail('notes', pattern);
+  notesPatterns.push(pattern);
+  activeNotesPatternId = id;
+  rebuildPatternThumbnails();
+  updateNotesCenterLabel();
+}
+
+/** Save (or update) the current drum pattern. */
+function saveDrumPattern() {
+  const snapshot = snapshotDrumPattern();
+
+  if (activeDrumPatternId !== null) {
+    const existing = drumPatterns.find(p => p.id === activeDrumPatternId);
+    if (existing) {
+      Object.assign(existing, snapshot);
+      existing.thumbnail = generateThumbnail('drums', existing);
+      rebuildPatternThumbnails();
+      return;
+    }
+  }
+
+  const id = crypto.randomUUID ? crypto.randomUUID() : 'dp-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  const pattern = {
+    id,
+    name: autoDrumName(),
+    type: 'drums',
+    ...snapshot,
+    thumbnail: '',
+  };
+  pattern.thumbnail = generateThumbnail('drums', pattern);
+  drumPatterns.push(pattern);
+  activeDrumPatternId = id;
+  rebuildPatternThumbnails();
+  updateDrumsCenterLabel();
+}
+
+/** Update pattern in-place without changing thumbnail or name. */
+function updatePatternInPlace(patternId) {
+  let pat = notesPatterns.find(p => p.id === patternId);
+  if (pat) {
+    Object.assign(pat, snapshotNotesPattern());
+    pat.thumbnail = generateThumbnail('notes', pat);
+    return;
+  }
+  pat = drumPatterns.find(p => p.id === patternId);
+  if (pat) {
+    Object.assign(pat, snapshotDrumPattern());
+    pat.thumbnail = generateThumbnail('drums', pat);
+  }
+}
+
+/** Queue a notes pattern switch at the next loop boundary. */
+function queueNotesSwitch(patternId) {
+  if (patternId === activeNotesPatternId) return;
+  if (!isPlaying) {
+    // Immediate switch when not playing
+    if (activeNotesPatternId) updatePatternInPlace(activeNotesPatternId);
+    const target = notesPatterns.find(p => p.id === patternId);
+    if (target) {
+      restoreNotesPattern(target);
+      refreshNotesUI();
+      activeNotesPatternId = patternId;
+      updateGraph();
+      updateNotesCenterLabel();
+      rebuildPatternThumbnails();
+    }
+    return;
+  }
+  pendingNotesSwitch = patternId;
+  rebuildPatternThumbnails();
+}
+
+/** Queue a drum pattern switch at the next loop boundary. */
+function queueDrumSwitch(patternId) {
+  if (patternId === activeDrumPatternId) return;
+  if (!isPlaying) {
+    if (activeDrumPatternId) updatePatternInPlace(activeDrumPatternId);
+    const target = drumPatterns.find(p => p.id === patternId);
+    if (target) {
+      restoreDrumPattern(target);
+      refreshDrumUI();
+      activeDrumPatternId = patternId;
+      updateDrumGraph();
+      updateDrumsCenterLabel();
+      rebuildPatternThumbnails();
+    }
+    return;
+  }
+  pendingDrumSwitch = patternId;
+  rebuildPatternThumbnails();
+}
+
+/** Update the __notes-center__ label to show active pattern name. */
+function updateNotesCenterLabel() {
+  if (!cy) return;
+  const node = cy.getElementById('__notes-center__');
+  if (!node.length) return;
+  if (activeNotesPatternId) {
+    const pat = notesPatterns.find(p => p.id === activeNotesPatternId);
+    if (pat) node.data('label', pat.name);
+  } else {
+    node.data('label', 'Notes');
+  }
+}
+
+/** Update the __drums-center__ label to show active pattern name. */
+function updateDrumsCenterLabel() {
+  if (!cy) return;
+  const node = cy.getElementById('__drums-center__');
+  if (!node.length) return;
+  if (activeDrumPatternId) {
+    const pat = drumPatterns.find(p => p.id === activeDrumPatternId);
+    if (pat) node.data('label', pat.name);
+  } else {
+    node.data('label', 'Drums');
+  }
+}
+
+/** Add/remove/update pattern thumbnail nodes in the graph. */
+function rebuildPatternThumbnails() {
+  if (!cy) return;
+
+  const allPatterns = [...notesPatterns, ...drumPatterns];
+  const activeThumbIds = new Set(allPatterns.map(p => `__pat-${p.id}__`));
+
+  // Remove stale thumbnail nodes
+  cy.nodes('.pattern-thumb').forEach(node => {
+    if (!activeThumbIds.has(node.id())) node.remove();
+  });
+
+  // Add or update thumbnail nodes
+  allPatterns.forEach(pat => {
+    const nodeId = `__pat-${pat.id}__`;
+    const isActive = pat.id === activeNotesPatternId || pat.id === activeDrumPatternId;
+    const isPending = pat.id === pendingNotesSwitch || pat.id === pendingDrumSwitch;
+    const color = pat.type === 'notes' ? '#00d4aa' : '#ff6b6b';
+
+    let node = cy.getElementById(nodeId);
+    if (node.length) {
+      node.data('thumbnail', pat.thumbnail);
+      node.data('label', pat.name);
+      node.data('color', color);
+      node.toggleClass('pattern-active', isActive);
+      node.toggleClass('pattern-pending', isPending);
+    } else {
+      cy.add({
+        data: {
+          id: nodeId,
+          label: pat.name,
+          thumbnail: pat.thumbnail,
+          color,
+          patternId: pat.id,
+          patternType: pat.type,
+        },
+        classes: 'pattern-thumb' + (isActive ? ' pattern-active' : '') + (isPending ? ' pattern-pending' : ''),
+        position: { x: 0, y: 0 },
+      });
+    }
+  });
+
+  positionAllRings();
+}
+
+/** Start inline rename of a pattern thumbnail node. */
+function startInlineRename(cyNode) {
+  const patternId   = cyNode.data('patternId');
+  const patternType = cyNode.data('patternType');
+  const pat = patternType === 'notes'
+    ? notesPatterns.find(p => p.id === patternId)
+    : drumPatterns.find(p => p.id === patternId);
+  if (!pat) return;
+
+  const container = cy.container();
+  const pos = cyNode.renderedPosition();
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'pattern-rename-input';
+  input.value = pat.name;
+  input.style.position = 'absolute';
+  input.style.left = (pos.x - 50) + 'px';
+  input.style.top  = (pos.y + 40) + 'px';
+  input.style.zIndex = '100';
+  container.appendChild(input);
+  input.focus();
+  input.select();
+
+  function commit() {
+    const newName = input.value.trim() || pat.name;
+    pat.name = newName;
+    cyNode.data('label', newName);
+    if (patternType === 'notes') updateNotesCenterLabel();
+    else updateDrumsCenterLabel();
+    cleanup();
+  }
+
+  function cleanup() {
+    input.removeEventListener('keydown', onKey);
+    input.removeEventListener('blur', commit);
+    if (input.parentNode) input.parentNode.removeChild(input);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cleanup(); }
+  }
+
+  input.addEventListener('keydown', onKey);
+  input.addEventListener('blur', commit);
+}
+
 // ═══════════════════════════════════════════════════════════
 // A. PIANO ROLL
 // ═══════════════════════════════════════════════════════════
@@ -292,6 +777,34 @@ function buildLoop() {
       pendingPlaybackMode = null;
       activeStepArray = getStepArray(playbackMode);
       prevStep = -1; // reset so first step of new mode is never treated as a duplicate
+    }
+
+    // Pattern switching at loop boundary
+    if (seqPosition === 0 && pendingNotesSwitch !== null) {
+      if (activeNotesPatternId) updatePatternInPlace(activeNotesPatternId);
+      const target = notesPatterns.find(p => p.id === pendingNotesSwitch);
+      if (target) restoreNotesPattern(target);
+      activeNotesPatternId = pendingNotesSwitch;
+      pendingNotesSwitch = null;
+      scheduleVisual(() => {
+        refreshNotesUI();
+        updateGraph();
+        updateNotesCenterLabel();
+        rebuildPatternThumbnails();
+      }, time);
+    }
+    if (seqPosition === 0 && pendingDrumSwitch !== null) {
+      if (activeDrumPatternId) updatePatternInPlace(activeDrumPatternId);
+      const target = drumPatterns.find(p => p.id === pendingDrumSwitch);
+      if (target) restoreDrumPattern(target);
+      activeDrumPatternId = pendingDrumSwitch;
+      pendingDrumSwitch = null;
+      scheduleVisual(() => {
+        refreshDrumUI();
+        updateDrumGraph();
+        updateDrumsCenterLabel();
+        rebuildPatternThumbnails();
+      }, time);
     }
 
     const step = activeStepArray[seqPosition];
@@ -492,6 +1005,27 @@ function stop() {
     playbackMode = pendingPlaybackMode;
     pendingPlaybackMode = null;
     buildLoop();
+  }
+  // Apply any pending pattern switches immediately on stop
+  if (pendingNotesSwitch !== null) {
+    if (activeNotesPatternId) updatePatternInPlace(activeNotesPatternId);
+    const target = notesPatterns.find(p => p.id === pendingNotesSwitch);
+    if (target) { restoreNotesPattern(target); refreshNotesUI(); }
+    activeNotesPatternId = pendingNotesSwitch;
+    pendingNotesSwitch = null;
+    updateGraph();
+    updateNotesCenterLabel();
+    rebuildPatternThumbnails();
+  }
+  if (pendingDrumSwitch !== null) {
+    if (activeDrumPatternId) updatePatternInPlace(activeDrumPatternId);
+    const target = drumPatterns.find(p => p.id === pendingDrumSwitch);
+    if (target) { restoreDrumPattern(target); refreshDrumUI(); }
+    activeDrumPatternId = pendingDrumSwitch;
+    pendingDrumSwitch = null;
+    updateDrumGraph();
+    updateDrumsCenterLabel();
+    rebuildPatternThumbnails();
   }
   document.querySelectorAll('.step-cell.playhead').forEach(el => el.classList.remove('playhead'));
   prevPlayingNodes.forEach(n => n.removeClass('playing'));
@@ -1027,10 +1561,15 @@ function updateDrumGraph() {
 
   // Manage __drums-center__ label node
   const drumsCenter = cy.getElementById('__drums-center__');
+  const drumsCenterLabel = activeDrumPatternId
+    ? (drumPatterns.find(p => p.id === activeDrumPatternId) || {}).name || 'Drums'
+    : 'Drums';
   if (drumStepSequence.length === 0) {
     if (drumsCenter.length) drumsCenter.remove();
   } else if (!drumsCenter.length) {
-    cy.add({ data: { id: '__drums-center__', label: 'Drums' }, classes: 'drum-ring-label', position: { x: 0, y: 0 } });
+    cy.add({ data: { id: '__drums-center__', label: drumsCenterLabel }, classes: 'drum-ring-label', position: { x: 0, y: 0 } });
+  } else {
+    drumsCenter.data('label', drumsCenterLabel);
   }
 
   // Add missing drum nodes
@@ -1301,6 +1840,39 @@ function initGraph() {
           'curve-style': 'bezier', 'arrow-scale': 0.75,
         },
       },
+      {
+        selector: 'node.pattern-thumb',
+        style: {
+          'width': 70, 'height': 70,
+          'background-image': 'data(thumbnail)',
+          'background-fit': 'cover',
+          'background-color': '#0d0d1a',
+          'border-width': 2, 'border-color': 'data(color)',
+          'border-opacity': 0.5,
+          'label': 'data(label)',
+          'font-size': '10px', 'font-family': 'monospace',
+          'color': 'data(color)',
+          'text-valign': 'bottom', 'text-margin-y': 8,
+          'text-halign': 'center',
+          'opacity': 0.7,
+          'shape': 'round-rectangle',
+        },
+      },
+      {
+        selector: 'node.pattern-thumb.pattern-active',
+        style: {
+          'border-width': 3, 'border-opacity': 1,
+          'opacity': 1.0,
+        },
+      },
+      {
+        selector: 'node.pattern-thumb.pattern-pending',
+        style: {
+          'border-width': 3, 'border-color': '#ffcc00',
+          'border-style': 'dashed',
+          'opacity': 1.0,
+        },
+      },
     ],
     elements: [],
     layout: { name: 'null' },
@@ -1308,6 +1880,33 @@ function initGraph() {
 
   cy.add({ data: { id: '__ball__' }, classes: 'ball', position: { x: 0, y: 0 } });
   cy.add({ data: { id: '__drum-ball__' }, classes: 'drum-ball', position: { x: 0, y: 0 } });
+
+  // Pattern thumbnail click → queue switch
+  cy.on('tap', 'node.pattern-thumb', (e) => {
+    const patternId   = e.target.data('patternId');
+    const patternType = e.target.data('patternType');
+    if (patternType === 'notes') queueNotesSwitch(patternId);
+    else queueDrumSwitch(patternId);
+  });
+
+  // Double-tap thumbnail to rename
+  cy.on('dbltap', 'node.pattern-thumb', (e) => {
+    startInlineRename(e.target);
+  });
+
+  // Double-tap center labels to rename active pattern
+  cy.on('dbltap', 'node.notes-ring-label, node.drum-ring-label', (e) => {
+    const nodeId = e.target.id();
+    if (nodeId === '__notes-center__' && activeNotesPatternId) {
+      const pat = notesPatterns.find(p => p.id === activeNotesPatternId);
+      const thumbNode = cy.getElementById(`__pat-${activeNotesPatternId}__`);
+      if (pat && thumbNode.length) startInlineRename(thumbNode);
+    } else if (nodeId === '__drums-center__' && activeDrumPatternId) {
+      const pat = drumPatterns.find(p => p.id === activeDrumPatternId);
+      const thumbNode = cy.getElementById(`__pat-${activeDrumPatternId}__`);
+      if (pat && thumbNode.length) startInlineRename(thumbNode);
+    }
+  });
 }
 
 /** Unique node ID for one pitch occurrence at a specific step. */
@@ -1460,6 +2059,28 @@ function positionAllRings() {
     if (centerLabel.length) centerLabel.position({ x: ringCx, y: ringCy });
   });
 
+  // Position pattern thumbnail nodes in a row below the main rings
+  const thumbNodes = cy.nodes('.pattern-thumb');
+  if (thumbNodes.length > 0) {
+    const noteThumbs = [];
+    const drumThumbs = [];
+    thumbNodes.forEach(n => {
+      if (n.data('patternType') === 'notes') noteThumbs.push(n);
+      else drumThumbs.push(n);
+    });
+
+    const thumbSpacing = 90;
+    const thumbY = cy_c + (drumN > 0 ? drumCy - cy_c : 0) + (drumN > 0 ? drumStackOuter : notesStackOuter) + 80;
+
+    const allThumbs = [...noteThumbs, ...drumThumbs];
+    const totalW = (allThumbs.length - 1) * thumbSpacing;
+    const startX = cx - totalW / 2;
+
+    allThumbs.forEach((node, i) => {
+      node.position({ x: startX + i * thumbSpacing, y: thumbY });
+    });
+  }
+
   cy.fit(40);
 }
 
@@ -1493,6 +2114,7 @@ function updateGraph() {
     if (id === '__ball__' || id === '__drum-ball__') return;
     if (id.startsWith('auto-') || id.startsWith('__auto-')) return;
     if (id.startsWith('drum-') || id === '__drums-center__') return;
+    if (id.startsWith('__pat-')) return;
     if (activeIds.has(id)) {
       node.removeClass('playing');
     } else {
@@ -1548,10 +2170,15 @@ function updateGraph() {
 
   // Manage Notes center label
   const notesCenter = cy.getElementById('__notes-center__');
+  const notesCenterLabel = activeNotesPatternId
+    ? (notesPatterns.find(p => p.id === activeNotesPatternId) || {}).name || 'Notes'
+    : 'Notes';
   if (stepSequence.length === 0) {
     if (notesCenter.length) notesCenter.remove();
   } else if (!notesCenter.length) {
-    cy.add({ data: { id: '__notes-center__', label: 'Notes' }, classes: 'notes-ring-label', position: { x: 0, y: 0 } });
+    cy.add({ data: { id: '__notes-center__', label: notesCenterLabel }, classes: 'notes-ring-label', position: { x: 0, y: 0 } });
+  } else {
+    notesCenter.data('label', notesCenterLabel);
   }
 
   positionAllRings();
@@ -2042,6 +2669,8 @@ document.addEventListener('DOMContentLoaded', () => {
     else randomizeAutoSeq(activeTab);
   });
   document.getElementById('fit-btn').addEventListener('click', fitGraph);
+  document.getElementById('notes-save-btn').addEventListener('click', saveNotesPattern);
+  document.getElementById('drum-save-btn').addEventListener('click', saveDrumPattern);
 
   const settingsToggle = document.getElementById('settings-toggle');
   const settingsPanel  = document.getElementById('settings-panel');

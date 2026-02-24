@@ -922,6 +922,40 @@ h1 {
 .seq-action-btn:hover { color: #c06060; border-color: #5a2a2a; }
 .seq-action-btn.active { color: #ff6b6b; border-color: #ff6b6b; background: #ff6b6b1a; }
 
+/* Save pattern button — distinct teal accent */
+.seq-action-btn.save-btn {
+  color: #00d4aa88;
+  border-color: #00d4aa33;
+}
+.seq-action-btn.save-btn:hover {
+  color: #00d4aa;
+  border-color: #00d4aa;
+  background: #00d4aa1a;
+}
+#drum-save-btn {
+  color: #ff6b6b88;
+  border-color: #ff6b6b33;
+}
+#drum-save-btn:hover {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+  background: #ff6b6b1a;
+}
+
+/* ── Pattern rename inline input ──────────────── */
+.pattern-rename-input {
+  width: 100px;
+  padding: 3px 6px;
+  background: #1c1c38;
+  color: #eee;
+  border: 1px solid #00d4aa;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  text-align: center;
+  outline: none;
+}
+
 /* ─── Graph ───────────────────────────────────── */
 
 #graph-wrap {
