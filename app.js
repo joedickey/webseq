@@ -238,6 +238,8 @@ function snapshotNotesPattern() {
       sustain: parseFloat(adsrSEl.value),
       release: parseFloat(adsrREl.value),
     },
+    waveform: document.querySelector('.waveform-btn.selected').dataset.wave,
+    playbackMode: playbackMode,
   };
 }
 
@@ -253,6 +255,7 @@ function snapshotDrumPattern() {
     drumGrid: deepCopyGrid(drumGrid, NUM_DRUM_ROWS, STEPS),
     drumMuted: mutedCopy,
     drumTrackVolume: volCopy,
+    drumPlaybackMode: drumPlaybackMode,
   };
 }
 
@@ -304,6 +307,20 @@ function restoreNotesPattern(pattern) {
     b.classList.toggle('selected', b.dataset.type === sv.filterType);
   });
   if (filter) filter.type = sv.filterType;
+
+  // Waveform
+  document.querySelectorAll('.waveform-btn').forEach(b =>
+    b.classList.toggle('selected', b.dataset.wave === pattern.waveform));
+  setWaveform(pattern.waveform);
+
+  // Playback mode (apply immediately — pattern switches already happen at loop boundary)
+  document.querySelectorAll('.playmode-btn').forEach(b =>
+    b.classList.toggle('selected', b.dataset.mode === pattern.playbackMode));
+  pendingPlaybackMode = null;
+  playbackMode = pattern.playbackMode;
+  activeStepArray = getStepArray(playbackMode);
+  seqPosition = 0;
+  prevStep = -1;
 }
 
 /** Helper: set a slider element value, update its display, and apply audio change. */
@@ -325,6 +342,11 @@ function restoreDrumPattern(pattern) {
       drumTrackGain[r].gain.value = pattern.drumTrackVolume[r];
     }
   }
+
+  // Drum playback mode
+  document.querySelectorAll('.drum-playmode-btn').forEach(b =>
+    b.classList.toggle('selected', b.dataset.drumMode === pattern.drumPlaybackMode));
+  drumPlaybackMode = pattern.drumPlaybackMode;
 }
 
 /** Refresh all drum UI elements to match current drumGrid/drumMuted/drumTrackVolume state. */
