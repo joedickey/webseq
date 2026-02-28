@@ -1,10 +1,10 @@
-# WebSeq
+# ToneSeq
 
 Browser-based step sequencer and drum machine with live pattern switching and graph visualization.
 
 ## Quick Start
 
-**Play it now:** [joedickey.github.io/webseq](https://joedickey.github.io/webseq/)
+**Play it now:** [toneseq.com](https://toneseq.com/)
 
 Or clone and open `index.html` directly — no build step, no server required.
 
