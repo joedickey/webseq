@@ -638,6 +638,10 @@ h1 {
   border-top: 1px solid #1a1a30;
   border-bottom: 1px solid #1a1a30;
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.section-bar::-webkit-scrollbar { display: none; }
 }
 
 .section-label {
@@ -1032,6 +1036,7 @@ h1 {
   cursor: pointer;
   font-size: 0.72rem;
   font-family: inherit;
+  flex-shrink: 0;
   margin-left: 6px;
   flex-shrink: 0;
   transition: color 0.12s, border-color 0.12s;
