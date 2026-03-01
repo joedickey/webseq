@@ -396,6 +396,10 @@ h1 {
 .fx-group {
   display: flex;
   align-items: center;
+  gap: 14px;
+}
+
+.fx-group .adsr-group {
   gap: 6px;
 }
 
