@@ -59,8 +59,14 @@ h1 {
   transition: transform 0.25s ease;
 }
 
-#info-bar.hidden {
-  transform: translateY(100%);
+#info-bar.docked {
+  position: static;
+  border-top: none;
+  border-top: 1px solid #2a2a4a;
+}
+
+#info-bar.docked #info-bar-close {
+  display: none;
 }
 
 .info-links {

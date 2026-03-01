@@ -2781,7 +2781,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('fit-btn').addEventListener('click', fitGraph);
   document.getElementById('info-bar-close').addEventListener('click', () => {
-    document.getElementById('info-bar').classList.add('hidden');
+    const bar = document.getElementById('info-bar');
+    bar.classList.add('docked');
   });
   document.getElementById('notes-save-btn').addEventListener('click', saveNotesPattern);
   document.getElementById('notes-save-new-btn').addEventListener('click', saveNewNotesPattern);
