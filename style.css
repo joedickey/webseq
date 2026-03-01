@@ -41,6 +41,24 @@ h1 {
   text-transform: uppercase;
 }
 
+.header-links {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.header-links a {
+  font-size: 0.72rem;
+  color: #666;
+  text-decoration: none;
+  letter-spacing: 0.5px;
+  transition: color 0.15s;
+}
+
+.header-links a:hover {
+  color: #00d4aa;
+}
+
 .controls {
   display: flex;
   align-items: center;
