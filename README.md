@@ -65,6 +65,10 @@ Or clone and open `index.html` directly — no build step, no server required.
 
 Built with [Tone.js](https://tonejs.github.io/) for audio synthesis and [Cytoscape.js](https://js.cytoscape.org/) for graph visualization. Pure HTML/CSS/JS — no framework, no build step, no server.
 
+## Support
+
+If you enjoy ToneSeq, consider [buying me a coffee](https://ko-fi.com/toneseq). Found a bug or have a feature request? [Open an issue](https://github.com/joedickey/ToneSeq/issues/new).
+
 ## Note
 
 Best experienced on desktop in Chrome, Firefox, or Safari. The interface is designed for full-screen desktop use.
