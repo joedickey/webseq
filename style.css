@@ -322,7 +322,7 @@ h1 {
 .adsr-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .adsr-group label {
@@ -390,17 +390,13 @@ h1 {
 .fx-controls {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 24px;
 }
 
 .fx-group {
   display: flex;
   align-items: center;
-  gap: 14px;
-}
-
-.fx-group .adsr-group {
-  gap: 6px;
+  gap: 24px;
 }
 
 .fx-label {
