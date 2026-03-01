@@ -556,6 +556,10 @@ h1 {
 /* Settings toggle */
 
 #settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
   overflow: hidden;
   max-height: 300px;
   transition: max-height 0.22s ease, opacity 0.22s ease;
@@ -564,12 +568,14 @@ h1 {
 
 #settings-panel .header-row {
   flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 #settings-panel .fx-controls,
 #settings-panel .adsr-controls {
   flex-wrap: wrap;
   width: 100%;
+  row-gap: 6px;
 }
 
 #settings-panel .fx-group {
@@ -1126,10 +1132,11 @@ h1 {
   .controls { flex-wrap: wrap; gap: 4px; }
   .transport-controls,
   .playmode-control { display: contents; }
-  #settings-panel .header-row { row-gap: 6px; gap: 10px; }
-  .fx-controls { flex-wrap: wrap; gap: 8px; row-gap: 4px; }
+  #settings-panel { gap: 4px; }
+  #settings-panel .header-row { row-gap: 4px; }
+  #settings-panel .fx-controls,
+  #settings-panel .adsr-controls { row-gap: 4px; }
   .fx-group { flex-wrap: wrap; gap: 6px; }
-  .adsr-controls { flex-wrap: wrap; gap: 8px; row-gap: 4px; }
   .adsr-group input[type="range"] { width: 60px; }
   .fx-sep { display: none; }
   #graph-wrap { min-height: 220px; }
