@@ -322,7 +322,7 @@ h1 {
 .adsr-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .adsr-group label {
@@ -331,7 +331,6 @@ h1 {
   color: #00d4aa;
   text-transform: uppercase;
   letter-spacing: 1px;
-  min-width: 36px;
   flex-shrink: 0;
 }
 
@@ -397,7 +396,7 @@ h1 {
 .fx-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .fx-label {
@@ -885,7 +884,6 @@ h1 {
 
 /* ── SEQ toggle button ─────────────────────────────────── */
 .seq-toggle-btn {
-  margin-left: auto;
   padding: 2px 6px;
   background: #1c1c38;
   color: #444;
