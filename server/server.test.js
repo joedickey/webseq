@@ -1,0 +1,225 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { createRequire } from 'module';
+import { createClient } from 'redis';
+import WebSocket from 'ws';
+
+const require = createRequire(import.meta.url);
+const { createServer } = require('./index.js');
+
+const PORT = 8091;
+const REDIS_URL = 'redis://localhost:6379';
+
+let wss, redisClient;
+
+function connect(roomCode) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://localhost:${PORT}?room=${roomCode}`);
+    ws.on('open', () => resolve(ws));
+    ws.on('error', reject);
+  });
+}
+
+// Listen for a message matching filter, with timeout
+function listen(ws, filter, timeout = 3000) {
+  return Promise.race([
+    new Promise(resolve => {
+      const handler = (data) => {
+        const msg = JSON.parse(data.toString());
+        if (!filter || filter(msg)) {
+          ws.off('message', handler);
+          resolve(msg);
+        }
+      };
+      ws.on('message', handler);
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out')), timeout))
+  ]);
+}
+
+// Collect all messages over a duration
+function collect(ws, duration = 500) {
+  return new Promise(resolve => {
+    const msgs = [];
+    const handler = (data) => msgs.push(JSON.parse(data.toString()));
+    ws.on('message', handler);
+    setTimeout(() => { ws.off('message', handler); resolve(msgs); }, duration);
+  });
+}
+
+async function cleanRoom(roomCode) {
+  const keys = await redisClient.keys(`room:${roomCode}:*`);
+  if (keys.length) await redisClient.del(keys);
+}
+
+describe('WebSocket Relay Server', () => {
+  beforeAll(async () => {
+    redisClient = createClient({ url: REDIS_URL });
+    await redisClient.connect();
+    wss = createServer({ port: PORT, redisClient });
+    await new Promise(r => setTimeout(r, 200));
+  });
+
+  afterAll(async () => {
+    if (wss) {
+      wss.clients.forEach(c => c.terminate());
+      await new Promise(r => wss.close(r));
+    }
+    if (redisClient) await redisClient.quit();
+  });
+
+  // ── Connection ────────────────────────────────────────────
+
+  it('rejects connections without a room code', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}`);
+    const code = await new Promise(resolve => ws.on('close', resolve));
+    expect(code).toBe(4001);
+  });
+
+  it('rejects too-short room codes', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}?room=AB`);
+    const code = await new Promise(resolve => ws.on('close', resolve));
+    expect(code).toBe(4001);
+  });
+
+  it('accepts valid room codes', async () => {
+    const ws = await connect('VALID');
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.close();
+  });
+
+  it('normalizes room codes to uppercase', async () => {
+    const room = 'NORM' + Date.now();
+    const ws1 = await connect(room.toLowerCase());
+    const ws2 = await connect(room);
+
+    // Attach listener BEFORE send
+    const promise = listen(ws1, m => m.type === 'announce');
+    await new Promise(r => setTimeout(r, 50));
+    ws2.send(JSON.stringify({ type: 'announce', tabId: 'tn', name: 'T', color: '#fff', state: {} }));
+
+    const msg = await promise;
+    expect(msg.tabId).toBe('tn');
+    ws1.close(); ws2.close();
+    await cleanRoom(room);
+  });
+
+  // ── Message Relay ─────────────────────────────────────────
+
+  it('forwards messages to other clients in the same room', async () => {
+    const room = 'FWD' + Date.now();
+    const ws1 = await connect(room);
+    const ws2 = await connect(room);
+
+    const promise = listen(ws2, m => m.type === 'announce');
+    await new Promise(r => setTimeout(r, 50));
+    ws1.send(JSON.stringify({ type: 'announce', tabId: 'ta', name: 'Pinhead', color: '#FF6B6B', state: { grid: [] } }));
+
+    const msg = await promise;
+    expect(msg.name).toBe('Pinhead');
+    expect(msg.tabId).toBe('ta');
+    ws1.close(); ws2.close();
+    await cleanRoom(room);
+  });
+
+  it('does NOT echo messages back to sender', async () => {
+    const room = 'ECHO' + Date.now();
+    const ws1 = await connect(room);
+
+    const msgs = collect(ws1, 500);
+    ws1.send(JSON.stringify({ type: 'announce', tabId: 'solo', name: 'T', color: '#000', state: {} }));
+    const collected = await msgs;
+    expect(collected.find(m => m.type === 'announce')).toBeUndefined();
+    ws1.close();
+    await cleanRoom(room);
+  });
+
+  it('does NOT forward messages across rooms', async () => {
+    const r1 = 'RA' + Date.now();
+    const r2 = 'RB' + Date.now();
+    const ws1 = await connect(r1);
+    const ws2 = await connect(r2);
+
+    const msgs = collect(ws2, 500);
+    ws1.send(JSON.stringify({ type: 'announce', tabId: 'x', name: 'T', color: '#000', state: {} }));
+    const collected = await msgs;
+    expect(collected.find(m => m.tabId === 'x')).toBeUndefined();
+    ws1.close(); ws2.close();
+    await cleanRoom(r1); await cleanRoom(r2);
+  });
+
+  // ── Redis Persistence ─────────────────────────────────────
+
+  it('stores tab state in Redis on announce', async () => {
+    const room = 'STORE' + Date.now();
+    const ws = await connect(room);
+
+    ws.send(JSON.stringify({
+      type: 'announce', tabId: 'ts', name: 'Chatterer', color: '#4ECDC4',
+      state: { grid: [[1, 0, 1]] }
+    }));
+    await new Promise(r => setTimeout(r, 500));
+
+    const raw = await redisClient.get(`room:${room}:tab:ts`);
+    expect(raw).not.toBeNull();
+    const stored = JSON.parse(raw);
+    expect(stored.name).toBe('Chatterer');
+    expect(stored.state.grid).toEqual([[1, 0, 1]]);
+    ws.close();
+    await cleanRoom(room);
+  });
+
+  it('sends existing room state to new joiners', async () => {
+    const room = 'JOINER' + Date.now();
+    const ws1 = await connect(room);
+
+    ws1.send(JSON.stringify({
+      type: 'announce', tabId: 'te', name: 'Dreamer', color: '#FFE66D', state: { bpm: 120 }
+    }));
+    await new Promise(r => setTimeout(r, 500));
+
+    const ws2 = await connect(room);
+    const msg = await listen(ws2, m => m.type === 'room-state');
+    expect(msg.tabs['te']).toBeDefined();
+    expect(msg.tabs['te'].name).toBe('Dreamer');
+    ws1.close(); ws2.close();
+    await cleanRoom(room);
+  });
+
+  it('keeps orphaned tab state after disconnect', async () => {
+    const room = 'ORPHAN' + Date.now();
+    const ws = await connect(room);
+
+    ws.send(JSON.stringify({
+      type: 'announce', tabId: 'to', name: 'Gasp', color: '#A78BFA',
+      state: { pattern: [1, 1, 0, 0] }
+    }));
+    await new Promise(r => setTimeout(r, 500));
+    ws.close();
+    await new Promise(r => setTimeout(r, 300));
+
+    const raw = await redisClient.get(`room:${room}:tab:to`);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw).name).toBe('Gasp');
+    await cleanRoom(room);
+  });
+
+  // ── Leave Notification ────────────────────────────────────
+
+  it('broadcasts leave when a client disconnects', async () => {
+    const room = 'LEAVE' + Date.now();
+    const ws1 = await connect(room);
+    const ws2 = await connect(room);
+
+    ws1.send(JSON.stringify({ type: 'announce', tabId: 'tl', name: 'Bound', color: '#fff', state: {} }));
+    await new Promise(r => setTimeout(r, 300));
+
+    const promise = listen(ws2, m => m.type === 'leave');
+    ws1.close();
+
+    const msg = await promise;
+    expect(msg.type).toBe('leave');
+    expect(msg.tabId).toBe('tl');
+    ws2.close();
+    await cleanRoom(room);
+  });
+});
