@@ -266,6 +266,38 @@ describe('WebSocket Relay Server', () => {
     await cleanRoom(room);
   });
 
+  // ── Transport Sync ──────────────────────────────────────
+
+  it('forwards transport messages to other clients', async () => {
+    const room = 'TRANS' + Date.now();
+    const ws1 = await connect(room);
+    const ws2 = await connect(room);
+
+    const promise = listen(ws2, m => m.type === 'transport');
+    await new Promise(r => setTimeout(r, 50));
+    ws1.send(JSON.stringify({ type: 'transport', tabId: 'tt', action: 'play' }));
+
+    const msg = await promise;
+    expect(msg.action).toBe('play');
+    ws1.close(); ws2.close();
+    await cleanRoom(room);
+  });
+
+  it('forwards BPM transport changes', async () => {
+    const room = 'BPM' + Date.now();
+    const ws1 = await connect(room);
+    const ws2 = await connect(room);
+
+    const promise = listen(ws2, m => m.type === 'transport' && m.action === 'bpm');
+    await new Promise(r => setTimeout(r, 50));
+    ws1.send(JSON.stringify({ type: 'transport', tabId: 'tb', action: 'bpm', value: 140 }));
+
+    const msg = await promise;
+    expect(msg.value).toBe(140);
+    ws1.close(); ws2.close();
+    await cleanRoom(room);
+  });
+
   // ── Leave Notification ────────────────────────────────────
 
   it('broadcasts leave when a client disconnects', async () => {

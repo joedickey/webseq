@@ -189,6 +189,45 @@ function scheduleJamBroadcast() {
   }, 200);
 }
 
+// ── Transport sync ────────────────────────────────────────
+
+let jamTransportRemote = false; // guard against broadcast loops
+
+function jamSendTransport(action, value) {
+  if (!jamConnected || !jamWs || jamTransportRemote) return;
+  jamWs.send(JSON.stringify({
+    type: 'transport',
+    tabId: jamTabId,
+    action,
+    value
+  }));
+}
+
+function handleRemoteTransport(msg) {
+  if (msg.tabId === jamTabId) return;
+  jamTransportRemote = true;
+  try {
+    switch (msg.action) {
+      case 'play':
+        if (typeof play === 'function') play();
+        break;
+      case 'stop':
+        if (typeof stop === 'function') stop();
+        break;
+      case 'bpm':
+        if (typeof setBPM === 'function' && msg.value) {
+          setBPM(msg.value);
+          const bpmEl = document.getElementById('bpm');
+          if (bpmEl) bpmEl.value = msg.value;
+          scheduleHashSync();
+        }
+        break;
+    }
+  } finally {
+    jamTransportRemote = false;
+  }
+}
+
 // ── Message handling ──────────────────────────────────────
 
 function handleJamMessage(msg) {
@@ -224,7 +263,7 @@ function handleJamMessage(msg) {
       }
       break;
     case 'transport':
-      // Transport sync — Task 7
+      handleRemoteTransport(msg);
       break;
   }
 }

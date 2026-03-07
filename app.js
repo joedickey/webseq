@@ -1293,11 +1293,13 @@ async function play() {
   if (metronomeEnabled) startMetronomeLoop();
   Tone.Transport.start();
   isPlaying = true;
+  if (typeof jamSendTransport === 'function') jamSendTransport('play');
 }
 
 function stop() {
   if (!isPlaying) return;
   Tone.Transport.stop();
+  if (typeof jamSendTransport === 'function') jamSendTransport('stop');
   isPlaying = false;
   seqPosition = 0;
   prevStep = -1;
@@ -2825,7 +2827,11 @@ document.addEventListener('DOMContentLoaded', () => {
     resizeTimer = setTimeout(fitGraph, 80);
   }).observe(document.getElementById('graph-wrap'));
 
-  document.getElementById('bpm').addEventListener('input', e => { setBPM(e.target.value); scheduleHashSync(); });
+  document.getElementById('bpm').addEventListener('input', e => {
+    setBPM(e.target.value);
+    if (typeof jamSendTransport === 'function') jamSendTransport('bpm', Number(e.target.value));
+    scheduleHashSync();
+  });
 
   document.querySelectorAll('.waveform-btn').forEach(btn => {
     btn.addEventListener('click', () => {
