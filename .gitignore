@@ -1,3 +1,5 @@
 .mcp.json
 server/node_modules/
 server/.env
+server/collaborative-jam-implementation-plan.md
+server/AUDIO-SPIKE-RESULTS.md

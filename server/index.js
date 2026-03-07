@@ -6,6 +6,7 @@ const redis = require('redis');
 const DEFAULT_PORT = 8080;
 const DEFAULT_REDIS_URL = 'redis://localhost:6379';
 const ROOM_TTL = 60 * 60 * 24; // 24 hours
+const MAX_TABS_PER_ROOM = 4;
 const HEARTBEAT_INTERVAL = 30000;
 
 // ── Redis helpers (take client as param) ───────────────────
@@ -94,6 +95,12 @@ function createServer(options = {}) {
 
     if (!localClients.has(roomCode)) localClients.set(roomCode, new Map());
     const room = localClients.get(roomCode);
+
+    if (room.size >= MAX_TABS_PER_ROOM) {
+      ws.close(4002, 'Room full');
+      return;
+    }
+
     const meta = { tabId: null, alive: true };
     room.set(ws, meta);
 

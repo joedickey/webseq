@@ -17,6 +17,7 @@ body {
 /* ─── Header ─────────────────────────────────── */
 
 header {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -33,6 +34,7 @@ header {
   flex-wrap: wrap;
   gap: 20px;
   row-gap: 6px;
+  padding-right: 56px;
 }
 
 h1 {
@@ -607,6 +609,132 @@ h1 {
   color: #00d4aa;
 }
 
+/* ─── Jam Session ─────────────────────────────── */
+
+.jam-control {
+  position: absolute;
+  top: 10px;
+  right: 20px;
+  z-index: 150;
+}
+
+.jam-btn {
+  padding: 5px 12px;
+  background: #1c1c38;
+  color: #9e9ec0;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-family: inherit;
+  font-weight: 600;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.jam-btn:hover {
+  border-color: #a78bfa;
+  color: #a78bfa;
+}
+
+.jam-btn.active {
+  background: #a78bfa;
+  color: #0d0d1a;
+  border-color: #a78bfa;
+}
+
+.jam-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #14142a;
+  border: 1px solid #3a3a5a;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.jam-action-btn {
+  padding: 4px 10px;
+  background: #1c1c38;
+  color: #ccc;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-family: inherit;
+  font-weight: 600;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.jam-action-btn:hover {
+  background: #252545;
+  border-color: #a78bfa;
+}
+
+.jam-leave {
+  color: #c06060;
+  border-color: #5a2a2a;
+}
+
+.jam-leave:hover {
+  background: #2a1a1a;
+  border-color: #c06060;
+}
+
+.jam-join-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#jam-join-input {
+  width: 60px;
+  padding: 4px 6px;
+  background: #0d0d1a;
+  color: #fff;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+#jam-join-input::placeholder {
+  color: #555;
+  letter-spacing: 2px;
+}
+
+#jam-join-input:focus {
+  outline: none;
+  border-color: #a78bfa;
+}
+
+.jam-code-display {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #a78bfa;
+  letter-spacing: 3px;
+}
+
+.jam-connected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.jam-error {
+  color: #c06060;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 /* Clear All */
 
 #clear-btn {
@@ -1137,6 +1265,7 @@ h1 {
 
 @media (max-width: 768px) {
   header { padding: 6px 12px; gap: 4px; }
+  .jam-control { top: 8px; right: 12px; }
   .controls { gap: 4px; row-gap: 4px; }
   .transport-controls,
   .playmode-control { display: contents; }

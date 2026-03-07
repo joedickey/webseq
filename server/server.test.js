@@ -103,6 +103,21 @@ describe('WebSocket Relay Server', () => {
     await cleanRoom(room);
   });
 
+  it('rejects 5th connection to a room (4-tab limit)', async () => {
+    const room = 'FULL' + Date.now();
+    const clients = [];
+    for (let i = 0; i < 4; i++) {
+      clients.push(await connect(room));
+    }
+
+    const ws5 = new WebSocket(`ws://localhost:${PORT}?room=${room}`);
+    const code = await new Promise(resolve => ws5.on('close', resolve));
+    expect(code).toBe(4002);
+
+    clients.forEach(ws => ws.close());
+    await cleanRoom(room);
+  });
+
   // ── Message Relay ─────────────────────────────────────────
 
   it('forwards messages to other clients in the same room', async () => {
