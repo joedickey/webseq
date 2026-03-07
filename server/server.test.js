@@ -218,6 +218,54 @@ describe('WebSocket Relay Server', () => {
     await cleanRoom(room);
   });
 
+  // ── State Updates ────────────────────────────────────────
+
+  it('persists state-update in Redis', async () => {
+    const room = 'UPDATE' + Date.now();
+    const ws = await connect(room);
+
+    // First announce to create the tab entry
+    ws.send(JSON.stringify({
+      type: 'announce', tabId: 'tu', name: 'Spike', color: '#FF6B6B',
+      state: { bpm: 120 }
+    }));
+    await new Promise(r => setTimeout(r, 500));
+
+    // Then send a state-update
+    ws.send(JSON.stringify({
+      type: 'state-update', tabId: 'tu',
+      state: { bpm: 140, grid: [[1, 1, 0]] }
+    }));
+    await new Promise(r => setTimeout(r, 500));
+
+    const raw = await redisClient.get(`room:${room}:tab:tu`);
+    expect(raw).not.toBeNull();
+    const stored = JSON.parse(raw);
+    expect(stored.state.bpm).toBe(140);
+    expect(stored.state.grid).toEqual([[1, 1, 0]]);
+    ws.close();
+    await cleanRoom(room);
+  });
+
+  it('forwards state-update to other clients', async () => {
+    const room = 'FWDUPD' + Date.now();
+    const ws1 = await connect(room);
+    const ws2 = await connect(room);
+
+    const promise = listen(ws2, m => m.type === 'state-update');
+    await new Promise(r => setTimeout(r, 50));
+    ws1.send(JSON.stringify({
+      type: 'state-update', tabId: 'tu2',
+      state: { bpm: 160 }
+    }));
+
+    const msg = await promise;
+    expect(msg.type).toBe('state-update');
+    expect(msg.state.bpm).toBe(160);
+    ws1.close(); ws2.close();
+    await cleanRoom(room);
+  });
+
   // ── Leave Notification ────────────────────────────────────
 
   it('broadcasts leave when a client disconnects', async () => {

@@ -18,6 +18,8 @@ let jamTabId = null;
 let jamReconnectDelay = WS_RECONNECT_BASE;
 let jamReconnectTimer = null;
 let jamConnected = false;
+const jamPeers = new Map(); // tabId -> { name, color, state }
+let jamBroadcastTimer = null;
 
 // ── Tab identity ─────────────────────────────────────────
 
@@ -63,7 +65,7 @@ function connectToRoom(roomCode) {
     ws.send(JSON.stringify({
       type: 'announce',
       tabId: jamTabId,
-      state: typeof encodeSession === 'function' ? encodeSession() : null
+      state: typeof serializeSession === 'function' ? serializeSession() : null
     }));
   };
 
@@ -117,28 +119,72 @@ function disconnectJam() {
     jamWs = null;
   }
   jamConnected = false;
+  jamPeers.clear();
   updateJamUI('disconnected');
 }
 
-// ── Message handling (stub — Task 5 will flesh this out) ─
+// ── State broadcast (debounced) ───────────────────────────
+
+function scheduleJamBroadcast() {
+  if (!jamConnected || !jamWs) return;
+  clearTimeout(jamBroadcastTimer);
+  jamBroadcastTimer = setTimeout(() => {
+    if (!jamConnected || !jamWs) return;
+    jamWs.send(JSON.stringify({
+      type: 'state-update',
+      tabId: jamTabId,
+      state: typeof serializeSession === 'function' ? serializeSession() : null
+    }));
+  }, 200);
+}
+
+// ── Message handling ──────────────────────────────────────
 
 function handleJamMessage(msg) {
   switch (msg.type) {
     case 'room-state':
-      // Received existing room state on join — Task 5
+      if (msg.tabs) {
+        for (const [id, data] of Object.entries(msg.tabs)) {
+          if (id !== jamTabId) {
+            jamPeers.set(id, data);
+          }
+        }
+        updatePeerDisplay();
+      }
       break;
     case 'announce':
-      // Another tab joined — Task 5
+      if (msg.tabId && msg.tabId !== jamTabId) {
+        jamPeers.set(msg.tabId, { name: msg.name, color: msg.color, state: msg.state });
+        updatePeerDisplay();
+      }
+      break;
+    case 'state-update':
+      if (msg.tabId && msg.tabId !== jamTabId) {
+        const peer = jamPeers.get(msg.tabId) || {};
+        peer.state = msg.state;
+        jamPeers.set(msg.tabId, peer);
+        updatePeerDisplay();
+      }
       break;
     case 'leave':
-      // A tab left — Task 5
-      break;
-    case 'edit':
-      // Remote edit — Task 5
+      if (msg.tabId) {
+        jamPeers.delete(msg.tabId);
+        updatePeerDisplay();
+      }
       break;
     case 'transport':
       // Transport sync — Task 7
       break;
+  }
+}
+
+// ── Peer display ──────────────────────────────────────────
+
+function updatePeerDisplay() {
+  const countEl = document.getElementById('jam-peer-count');
+  if (countEl) {
+    const count = jamPeers.size;
+    countEl.textContent = count > 0 ? `${count} peer${count !== 1 ? 's' : ''}` : '';
   }
 }
 
@@ -156,6 +202,7 @@ function updateJamUI(state) {
       panel.innerHTML = `
         <div class="jam-connected">
           <span class="jam-code-display">${jamRoomCode}</span>
+          <span id="jam-peer-count" class="jam-peer-count"></span>
           <button id="jam-copy-btn" class="jam-action-btn" title="Copy code">Copy</button>
           <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
         </div>

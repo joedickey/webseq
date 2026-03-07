@@ -877,6 +877,7 @@ let hashSyncTimer = null;
 function scheduleHashSync() {
   clearTimeout(hashSyncTimer);
   hashSyncTimer = setTimeout(syncHash, 500);
+  if (typeof scheduleJamBroadcast === 'function') scheduleJamBroadcast();
 }
 function syncHash() {
   try {

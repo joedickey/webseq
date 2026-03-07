@@ -131,6 +131,14 @@ function createServer(options = {}) {
           }
         }
 
+        if (msg.type === 'state-update' && msg.tabId) {
+          const existing = await getTabState(pub, roomCode, msg.tabId);
+          if (existing) {
+            existing.state = msg.state;
+            await saveTabState(pub, roomCode, msg.tabId, existing);
+          }
+        }
+
         if (msg.type === 'edit' && msg.source) {
           const existing = await getTabState(pub, roomCode, msg.source);
           if (existing) {

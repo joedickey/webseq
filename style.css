@@ -723,6 +723,11 @@ h1 {
   letter-spacing: 3px;
 }
 
+.jam-peer-count {
+  font-size: 0.75rem;
+  color: #9e9ec0;
+}
+
 .jam-connected {
   display: flex;
   align-items: center;
