@@ -1175,6 +1175,9 @@ function buildLoop() {
       }
     }
 
+    // Local clock sync: leader broadcasts beat position for follower tabs
+    if (step === 0 && typeof broadcastBeatSync === 'function') broadcastBeatSync(step);
+
     scheduleVisual(() => {
       highlightPlayhead(step);
       // Pass nextPos (array position) so reverse-phase dist is calculated correctly

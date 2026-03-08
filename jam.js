@@ -109,6 +109,7 @@ function connectToRoom(roomCode) {
     jamConnected = true;
     jamReconnectDelay = WS_RECONNECT_BASE;
     updateJamUI('connected');
+    initClockSync();
 
     // Announce this tab to the room
     ws.send(JSON.stringify({
@@ -171,6 +172,7 @@ function disconnectJam() {
   }
   jamConnected = false;
   jamPeers.clear();
+  teardownClockSync();
   updateJamUI('disconnected');
 }
 
@@ -226,6 +228,103 @@ function handleRemoteTransport(msg) {
   } finally {
     jamTransportRemote = false;
   }
+}
+
+// ── Local clock sync (BroadcastChannel) ───────────────────
+
+let clockChannel = null;
+let isClockLeader = false;
+let leaderTabId = null;
+let leaderElectionTimer = null;
+
+function initClockSync() {
+  if (!('BroadcastChannel' in window)) return;
+  clockChannel = new BroadcastChannel('jam-clock');
+
+  clockChannel.onmessage = (e) => {
+    const msg = e.data;
+    switch (msg.type) {
+      case 'leader-claim':
+        // Another tab is claiming leadership
+        if (msg.tabId !== jamTabId) {
+          leaderTabId = msg.tabId;
+          isClockLeader = false;
+        }
+        break;
+      case 'leader-ping':
+        // Another tab asking who's here — if we're leader, re-assert
+        if (isClockLeader) {
+          clockChannel.postMessage({ type: 'leader-claim', tabId: jamTabId });
+        }
+        break;
+      case 'leader-pong':
+        // Someone responded to our ping — they exist, let leader-claim resolve it
+        break;
+      case 'beat-sync':
+        // Leader broadcasting beat position — followers align
+        if (!isClockLeader && msg.tabId !== jamTabId && typeof Tone !== 'undefined') {
+          nudgeTransport(msg);
+        }
+        break;
+      case 'leader-gone':
+        // Leader left — elect new one
+        if (msg.tabId === leaderTabId) {
+          leaderTabId = null;
+          tryBecomeLeader();
+        }
+        break;
+    }
+  };
+
+  tryBecomeLeader();
+}
+
+function tryBecomeLeader() {
+  // Wait briefly for existing leader to respond
+  clearTimeout(leaderElectionTimer);
+  clockChannel.postMessage({ type: 'leader-ping', tabId: jamTabId });
+  leaderElectionTimer = setTimeout(() => {
+    if (!leaderTabId) {
+      isClockLeader = true;
+      leaderTabId = jamTabId;
+      clockChannel.postMessage({ type: 'leader-claim', tabId: jamTabId });
+    }
+  }, 200);
+}
+
+function broadcastBeatSync(step) {
+  if (!isClockLeader || !clockChannel) return;
+  clockChannel.postMessage({
+    type: 'beat-sync',
+    tabId: jamTabId,
+    step,
+    transportPos: Tone.Transport.seconds,
+    bpm: Tone.Transport.bpm.value
+  });
+}
+
+function nudgeTransport(msg) {
+  if (typeof Tone === 'undefined' || !Tone.Transport) return;
+  // Only nudge if we're playing and on a different step
+  if (typeof isPlaying !== 'undefined' && isPlaying && typeof seqPosition !== 'undefined') {
+    // If leader says step 0 and we're not at 0, we're drifting — resync
+    if (msg.step === 0 && seqPosition > 1 && seqPosition < 15) {
+      // Significant drift detected — snap Transport position
+      Tone.Transport.seconds = msg.transportPos;
+    }
+  }
+}
+
+function teardownClockSync() {
+  if (clockChannel) {
+    if (isClockLeader) {
+      clockChannel.postMessage({ type: 'leader-gone', tabId: jamTabId });
+    }
+    clockChannel.close();
+    clockChannel = null;
+  }
+  isClockLeader = false;
+  leaderTabId = null;
 }
 
 // ── Message handling ──────────────────────────────────────
