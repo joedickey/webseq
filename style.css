@@ -785,6 +785,9 @@ h1 {
 /* Clear All */
 
 #clear-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 20px;
   padding: 5px 14px;
   background: #1c1c38;
   color: #c06060;
@@ -794,6 +797,7 @@ h1 {
   font-size: 0.82rem;
   font-family: inherit;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
+  z-index: 10;
 }
 
 #clear-btn:hover {
