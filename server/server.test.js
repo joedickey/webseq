@@ -298,6 +298,32 @@ describe('WebSocket Relay Server', () => {
     await cleanRoom(room);
   });
 
+  // ── Session Snapshots ────────────────────────────────────
+
+  it('restores room state after all clients disconnect and rejoin', async () => {
+    const room = 'SNAP' + Date.now();
+    const ws1 = await connect(room);
+
+    ws1.send(JSON.stringify({
+      type: 'announce', tabId: 'ts1', name: 'Cowboy', color: '#FFE66D',
+      state: { bpm: 130, grid: [[1, 0, 1, 0]] }
+    }));
+    await new Promise(r => setTimeout(r, 500));
+
+    // Everyone disconnects
+    ws1.close();
+    await new Promise(r => setTimeout(r, 300));
+
+    // New client joins the same room
+    const ws2 = await connect(room);
+    const msg = await listen(ws2, m => m.type === 'room-state');
+    expect(msg.tabs['ts1']).toBeDefined();
+    expect(msg.tabs['ts1'].name).toBe('Cowboy');
+    expect(msg.tabs['ts1'].state.bpm).toBe(130);
+    ws2.close();
+    await cleanRoom(room);
+  });
+
   // ── Leave Notification ────────────────────────────────────
 
   it('broadcasts leave when a client disconnects', async () => {
