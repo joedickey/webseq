@@ -1296,7 +1296,7 @@ async function play() {
   if (metronomeEnabled) startMetronomeLoop();
   Tone.Transport.start();
   isPlaying = true;
-  if (typeof jamSendTransport === 'function') jamSendTransport('play');
+  if (typeof jamSendTransport === 'function') jamSendTransport('play', seqPosition);
 }
 
 function stop() {

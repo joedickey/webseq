@@ -200,7 +200,7 @@ describe('WebSocket Relay Server', () => {
     await cleanRoom(room);
   });
 
-  it('keeps orphaned tab state after disconnect', async () => {
+  it('removes tab state from Redis after disconnect', async () => {
     const room = 'ORPHAN' + Date.now();
     const ws = await connect(room);
 
@@ -213,8 +213,9 @@ describe('WebSocket Relay Server', () => {
     await new Promise(r => setTimeout(r, 300));
 
     const raw = await redisClient.get(`room:${room}:tab:to`);
-    expect(raw).not.toBeNull();
-    expect(JSON.parse(raw).name).toBe('Gasp');
+    expect(raw).toBeNull();
+    const members = await redisClient.sMembers(`room:${room}:tabs`);
+    expect(members).not.toContain('to');
     await cleanRoom(room);
   });
 
@@ -300,7 +301,7 @@ describe('WebSocket Relay Server', () => {
 
   // ── Session Snapshots ────────────────────────────────────
 
-  it('restores room state after all clients disconnect and rejoin', async () => {
+  it('cleans room state after all clients disconnect', async () => {
     const room = 'SNAP' + Date.now();
     const ws1 = await connect(room);
 
@@ -310,16 +311,30 @@ describe('WebSocket Relay Server', () => {
     }));
     await new Promise(r => setTimeout(r, 500));
 
-    // Everyone disconnects
+    // Everyone disconnects — state should be cleaned up
     ws1.close();
     await new Promise(r => setTimeout(r, 300));
 
-    // New client joins the same room
+    // New client joins — should get empty room (no stale peers)
     const ws2 = await connect(room);
-    const msg = await listen(ws2, m => m.type === 'room-state');
-    expect(msg.tabs['ts1']).toBeDefined();
-    expect(msg.tabs['ts1'].name).toBe('Cowboy');
-    expect(msg.tabs['ts1'].state.bpm).toBe(130);
+    // Wait briefly for any room-state message
+    let gotRoomState = false;
+    const timeout = new Promise(r => setTimeout(() => r(null), 500));
+    const msgPromise = new Promise(resolve => {
+      ws2.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'room-state') {
+          gotRoomState = true;
+          resolve(msg);
+        }
+      });
+    });
+    await Promise.race([msgPromise, timeout]);
+    // Either no room-state received, or it has no tabs
+    if (gotRoomState) {
+      const msg = await msgPromise;
+      expect(Object.keys(msg.tabs)).toHaveLength(0);
+    }
     ws2.close();
     await cleanRoom(room);
   });

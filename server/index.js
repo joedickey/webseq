@@ -172,6 +172,11 @@ function createServer(options = {}) {
       if (meta.tabId) {
         const leaveMsg = { type: 'leave', tabId: meta.tabId };
         broadcast(localClients, roomCode, leaveMsg);
+        try {
+          await removeTabFromRoom(pub, roomCode, meta.tabId);
+        } catch (err) {
+          log('error', 'Redis error removing tab on disconnect', { room: roomCode, tabId: meta.tabId, error: err.message });
+        }
       }
     });
 

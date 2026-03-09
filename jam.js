@@ -135,6 +135,11 @@ function connectToRoom(roomCode) {
       color: jamColor,
       state: typeof serializeSession === 'function' ? serializeSession() : null
     }));
+
+    // Request current transport state from peers
+    setTimeout(() => {
+      jamSendTransport('request-sync');
+    }, 300);
   };
 
   ws.onmessage = (e) => {
@@ -234,6 +239,33 @@ function handleRemoteTransport(msg) {
       case 'play':
         if (typeof play === 'function') play();
         break;
+      case 'request-sync':
+        // New tab requesting current transport state
+        if (typeof isPlaying !== 'undefined' && isPlaying) {
+          jamSendTransport('sync-state', {
+            playing: true,
+            step: typeof seqPosition !== 'undefined' ? seqPosition : 0,
+            transportPos: Tone.Transport.seconds,
+            bpm: Tone.Transport.bpm.value
+          });
+        }
+        break;
+      case 'sync-state':
+        if (msg.value && msg.value.playing) {
+          if (typeof setBPM === 'function' && msg.value.bpm) {
+            setBPM(msg.value.bpm);
+            const bpmEl = document.getElementById('bpm');
+            if (bpmEl) bpmEl.value = msg.value.bpm;
+          }
+          if (typeof play === 'function') {
+            play().then(() => {
+              if (msg.value.transportPos != null) {
+                Tone.Transport.seconds = msg.value.transportPos;
+              }
+            });
+          }
+        }
+        break;
       case 'stop':
         if (typeof stop === 'function') stop();
         break;
@@ -326,11 +358,10 @@ function broadcastBeatSync(step) {
 
 function nudgeTransport(msg) {
   if (typeof Tone === 'undefined' || !Tone.Transport) return;
-  // Only nudge if we're playing and on a different step
   if (typeof isPlaying !== 'undefined' && isPlaying && typeof seqPosition !== 'undefined') {
-    // If leader says step 0 and we're not at 0, we're drifting — resync
-    if (msg.step === 0 && seqPosition > 1 && seqPosition < 15) {
-      // Significant drift detected — snap Transport position
+    // Snap to leader position if more than 1 step out of sync
+    const stepDiff = Math.abs(msg.step - seqPosition);
+    if (stepDiff > 1 && stepDiff < 15) {
       Tone.Transport.seconds = msg.transportPos;
     }
   }
