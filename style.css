@@ -759,9 +759,8 @@ h1 {
 /* Clear All */
 
 #clear-btn {
-  position: absolute;
-  bottom: 8px;
-  right: 20px;
+  align-self: flex-end;
+  margin-right: 0;
   padding: 5px 14px;
   background: #1c1c38;
   color: #c06060;
@@ -771,7 +770,6 @@ h1 {
   font-size: 0.82rem;
   font-family: inherit;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
-  z-index: 10;
 }
 
 #clear-btn:hover {
@@ -1306,6 +1304,5 @@ h1 {
   .section-bar { gap: 2px; padding: 4px 8px; }
   .seq-action-btn { margin-left: 2px; }
   .drum-section-controls { padding-left: 4px; }
-  /* Fix Clear All overlap with controls */
-  #clear-btn { position: static; margin-left: auto; flex-shrink: 0; }
+  #clear-btn { flex-shrink: 0; }
 }
